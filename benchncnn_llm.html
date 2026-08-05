@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ncnn benchncnn_llm 浏览器性能测试">
+    <title>benchncnn_llm · Browser Benchmark</title>
+    <link rel="stylesheet" href="./benchmark.css">
+</head>
+<body>
+    <main class="shell">
+        <header class="hero">
+            <nav>
+                <a href="./index.html">← SqueezeNet</a>
+                <a href="./benchncnn.html">benchncnn</a>
+                <a href="./vkpeak.html">vkpeak</a>
+            </nav>
+            <p class="eyebrow">NCNN LLM · WASM · VULKAN ON VKWEBGPU</p>
+            <h1>浏览器版 <em>benchncnn_llm</em></h1>
+            <p class="lede">选择一个 LLM 结构，页面会自动顺序运行 WASM、WASM-SIMD 与每个 WebGPU 设备，并实时绘制 prefill 和 decode 吞吐量柱状图。</p>
+        </header>
+
+        <section class="controls" aria-labelledby="run-title">
+            <div>
+                <p class="section-label">01 / CONFIGURE</p>
+                <h2 id="run-title">选择模型</h2>
+                <div class="control-options">
+                    <label>正式循环次数
+                        <select id="loop-count">
+                            <option value="1">1</option>
+                            <option value="4" selected>4</option>
+                            <option value="10">10</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+            <div id="model-buttons" class="model-buttons" aria-label="benchncnn_llm 模型"></div>
+            <p id="status" class="status" aria-live="polite">正在枚举 WebGPU 设备，稍后选择模型开始测试。</p>
+        </section>
+
+        <section class="results-section" aria-labelledby="results-title">
+            <div class="results-heading">
+                <div>
+                    <p class="section-label">02 / RESULT</p>
+                    <h2 id="results-title">Prefill 与 Decode</h2>
+                </div>
+                <p>每个模型完成后立即更新 prefill 与 decode。数值保持新版原生 benchncnn_llm 的最快轮 tokens/s 口径。</p>
+            </div>
+            <div id="results"><div class="empty">选择一个模型，自动比较全部可用后端。</div></div>
+        </section>
+
+        <footer>
+            <span>ncnn benchncnn_llm · prefill / decode</span>
+            <span>柱越长越快 · 后端间销毁 Worker 以回收 Wasm 与 WebGPU 内存</span>
+        </footer>
+    </main>
+    <script type="module" src="./benchncnn_llm.js"></script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ncnn Vulkan on vkwebgpu 浏览器峰值测试">
+    <title>vkpeak · ncnn Vulkan on WebGPU</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23b9ff39'/><path d='M13 18h9l10 28 10-28h9L37 54H27z' fill='%230b0d0c'/></svg>">
+    <link rel="stylesheet" href="./vkpeak.css">
+</head>
+<body>
+    <main class="shell">
+        <header class="hero">
+            <nav><a href="./index.html">← SqueezeNet</a> · <a href="./benchncnn.html">benchncnn</a> · <a href="./benchncnn_llm.html">benchncnn_llm</a></nav>
+            <p class="eyebrow">NCNN · VULKAN ON VKWEBGPU</p>
+            <h1>浏览器版 <em>vkpeak</em></h1>
+            <p class="lede">参考 <a href="https://github.com/nihui/vkpeak" target="_blank" rel="noreferrer">vkpeak</a>，通过 ncnn Vulkan API、vkwebgpu 和 WebGPU 测量合成算术、cooperative matrix 吞吐与内存带宽。结果不代表真实模型性能。</p>
+        </header>
+
+        <section class="controls" aria-labelledby="device-title">
+            <div>
+                <p class="section-label">01 / DEVICE</p>
+                <h2 id="device-title">选择 WebGPU 设备</h2>
+                <p>设备逐个运行，避免相互争抢 GPU；已经完成的结果会保留在同一张表中。</p>
+            </div>
+            <div id="device-buttons" class="device-buttons">
+                <button id="device-placeholder" type="button" disabled>正在枚举设备…</button>
+            </div>
+            <p id="status" class="status" aria-live="polite">正在初始化 vkwebgpu。</p>
+        </section>
+
+        <section class="results-section" aria-labelledby="results-title">
+            <div class="results-heading">
+                <div>
+                    <p class="section-label">02 / RESULT</p>
+                    <h2 id="results-title">峰值测试结果</h2>
+                </div>
+                <p>每一行是一个 vkpeak 测试条目，每一列对应一个由 ncnn 枚举的 WebGPU 设备。</p>
+            </div>
+            <div id="results" class="results">
+                <div class="empty">设备枚举完成后将在这里生成结果表。</div>
+            </div>
+        </section>
+
+        <footer>
+            <span>ncnn · Vulkan · vkwebgpu · WebGPU</span>
+            <span>所有测试均在本地浏览器中运行</span>
+        </footer>
+    </main>
+    <script type="module" src="./vkpeak.js"></script>
+</body>
+</html>

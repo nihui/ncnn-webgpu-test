@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ncnn SqueezeNet WASM、WASM SIMD 与多 WebGPU 设备浏览器端推理对比">
+    <title>ncnn SqueezeNet · Browser Backend Lab</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23b9ff39'/><path d='M17 18h30v8H26v8h18v8H26v8h21v8H17z' fill='%230b0d0c'/></svg>">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <main class="shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">NCNN · SQUEEZENET V1.1</p>
+                <h1>同一张图，<br><em>多个浏览器后端。</em></h1>
+                <p class="lede">真实 ImageNet 模型在本地完成推理。每次连续执行 10 轮，展示最快一轮的耗时、Top-3 分类和置信度。</p>
+            </div>
+            <div class="capabilities" aria-label="浏览器能力">
+                <div><span class="cap-dot"></span><strong>WASM</strong><span id="cap-wasm">检测中</span></div>
+                <div><span class="cap-dot"></span><strong>SIMD</strong><span id="cap-wasm-simd">检测中</span></div>
+                <div><span class="cap-dot"></span><strong>WebGPU</strong><span id="cap-webgpu">检测中</span></div>
+            </div>
+        </header>
+
+        <section class="workspace">
+            <label class="drop-zone" id="drop-zone" for="image-file">
+                <input id="image-file" type="file" accept="image/*">
+                <img id="preview" alt="待分类图片预览" hidden>
+                <span id="preview-placeholder" class="preview-placeholder">
+                    <span class="upload-icon">↥</span>
+                    <strong>选择或拖入图片</strong>
+                    <small>JPEG · PNG · WebP</small>
+                </span>
+                <span class="replace-hint">点击更换图片</span>
+            </label>
+
+            <div class="controls">
+                <div>
+                    <p class="section-label">01 / 输入</p>
+                    <h2>选择推理后端</h2>
+                    <p id="source-meta" class="source-meta">尚未选择图片</p>
+                </div>
+                <div class="backend-buttons">
+                    <button type="button" data-backend-key="wasm" data-backend-kind="wasm" disabled>
+                        <span>WASM</span>
+                        <small>标量 CPU</small>
+                    </button>
+                    <button type="button" data-backend-key="wasm-simd" data-backend-kind="wasm-simd" disabled>
+                        <span>WASM SIMD</span>
+                        <small>128-bit SIMD</small>
+                    </button>
+                    <button id="webgpu-device-placeholder" type="button" data-backend-kind="webgpu" disabled>
+                        <span>WebGPU</span>
+                        <small>正在枚举设备…</small>
+                    </button>
+                </div>
+                <p id="status-line" class="status-line" aria-live="polite">上传图片后即可开始。</p>
+            </div>
+        </section>
+
+        <section class="results-section">
+            <div class="results-heading">
+                <div>
+                    <p class="section-label">02 / 结果</p>
+                    <h2>分类与性能</h2>
+                </div>
+                <p>计时覆盖创建 `Extractor`、`Extractor::input()` 和 `Extractor::extract()`，模型加载、WebGPU shader 编译和图片预处理不计入；初始化时间单独显示。</p>
+            </div>
+            <div id="results" class="results">
+                <article class="comparison-card" aria-labelledby="comparison-title">
+                    <header>
+                        <div>
+                            <p class="section-label">10 次最快</p>
+                            <h3 id="comparison-title">各后端与设备耗时对比</h3>
+                        </div>
+                        <p>越短越快 · 每项取 10 次连续推理的最快值</p>
+                    </header>
+                    <div class="benchmark-chart">
+                        <div class="benchmark-row" data-chart-backend="wasm">
+                            <strong>WASM</strong>
+                            <span class="benchmark-track"><span class="benchmark-bar"></span></span>
+                            <span class="benchmark-value">待运行</span>
+                        </div>
+                        <div class="benchmark-row" data-chart-backend="wasm-simd">
+                            <strong>WASM SIMD</strong>
+                            <span class="benchmark-track"><span class="benchmark-bar"></span></span>
+                            <span class="benchmark-value">待运行</span>
+                        </div>
+                        <div id="webgpu-chart-placeholder" class="benchmark-row">
+                            <strong>WebGPU</strong>
+                            <span class="benchmark-track"><span class="benchmark-bar"></span></span>
+                            <span class="benchmark-value">检测中</span>
+                        </div>
+                    </div>
+                </article>
+                <div class="empty-results">运行任一后端后，详细结果会显示在这里。</div>
+            </div>
+        </section>
+
+        <footer>
+            <span>ncnn · SqueezeNet V1.1 · Vulkan on vkwebgpu</span>
+            <span><a href="./benchncnn.html">benchncnn</a> · <a href="./benchncnn_llm.html">benchncnn_llm</a> · <a href="./vkpeak.html">vkpeak</a></span>
+        </footer>
+    </main>
+
+    <template id="result-template">
+        <article class="result-card">
+            <header>
+                <div>
+                    <h3 class="result-title"></h3>
+                    <p class="result-detail"></p>
+                </div>
+                <div class="fastest">
+                    <span>10 次最快</span>
+                    <strong class="fastest-value"></strong>
+                </div>
+            </header>
+            <ol class="top-list"></ol>
+            <div class="timing-panel">
+                <div class="timing-title">
+                    <span>10 次推理 / ms</span>
+                    <span>初始化 <strong class="init-value"></strong></span>
+                </div>
+                <div class="timing-list"></div>
+            </div>
+        </article>
+    </template>
+
+    <script type="module" src="./app.js"></script>
+</body>
+</html>
