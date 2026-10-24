@@ -1,0 +1,4 @@
+/build*/
+/.deps/
+/tests/browser/node_modules/
+/test-results*.json

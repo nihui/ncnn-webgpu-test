@@ -1,0 +1,81 @@
+# Copyright 2026 Tencent
+# SPDX-License-Identifier: BSD-3-Clause
+name: SqueezeNet prebuilt nikki consumer
+on:
+  workflow_dispatch:
+    inputs:
+      nikki_version:
+        description: 'Published nikki YYYYMMDD SDK release tag'
+        required: true
+        type: string
+      nikki_revision:
+        description: 'Exact 40-character nikki source commit from that release'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  squeezenet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      BINARYEN_CORES: '1'
+      NIKKI_VERSION: ${{ inputs.nikki_version }}
+      NIKKI_REVISION: ${{ inputs.nikki_revision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: '5.0.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.0'
+          cache: npm
+          cache-dependency-path: tests/browser/package-lock.json
+      - name: Install runner and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          npm ci --prefix tests/browser --ignore-scripts
+      - name: Download the fixed public SDK release
+        run: tools/download-nikki.sh .deps/nikki
+      - name: Link the application against the prebuilt SDK
+        env:
+          NIKKI_PREFIX: .deps/nikki
+        run: tools/build-squeezenet.sh
+      - name: Check linked module ABI without GPU execution
+        run: |
+          node tests/check-module-abi.mjs build/assets/squeezenet-webgpu.mjs > test-results-module-abi.json
+          cat test-results-module-abi.json
+      - name: Build diagnostic CPU wrapper and compare against committed CPU modules
+        run: |
+          emcmake cmake -S . -B build-cpu-reference -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON \
+            -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
+          cmake --build build-cpu-reference --parallel 2
+          node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
+      - name: Verify worker ABI and CPU versus WebGPU results
+        timeout-minutes: 40
+        run: |
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          node tests/browser/run.mjs --chrome "$CHROME" --module-dir build/assets --output test-results-browser.json
+      - name: Package the pair and record the selected producer
+        run: |
+          mkdir -p artifact/assets
+          cp build/assets/squeezenet-webgpu.mjs build/assets/squeezenet-webgpu.wasm artifact/assets/
+          printf '%s\n' "$NIKKI_REVISION" > artifact/nikki-source-revision.txt
+          printf '%s\n' "$NIKKI_VERSION" > artifact/nikki-release-version.txt
+          printf '%s\n' cb65ca26ba955bf456f3a26e13e9a644769fc4a4 > artifact/ncnn-source-revision.txt
+          cp test-results-*.json artifact/
+          git diff --exit-code -- assets backend-worker.mjs app.js index.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: squeezenet-webgpu-${{ inputs.nikki_revision }}
+          path: artifact/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: squeezenet-failure-results
+          path: test-results-*.json
+          if-no-files-found: ignore
