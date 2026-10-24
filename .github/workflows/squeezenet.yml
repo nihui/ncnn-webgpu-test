@@ -76,9 +76,9 @@ jobs:
           cp build/assets/*-webgpu.mjs build/assets/*-webgpu.wasm artifact/assets/
           printf '%s\n' "$NIKKI_REVISION" > artifact/nikki-source-revision.txt
           printf '%s\n' "$NIKKI_VERSION" > artifact/nikki-release-version.txt
-          printf '%s\n' 6.0.12 > artifact/emsdk-version.txt
-          printf '%s\n' cb65ca26ba955bf456f3a26e13e9a644769fc4a4 > artifact/ncnn-source-revision.txt
-          printf '%s\n' f37dab4c421781bf047face221dbaf6ae112a5e7 > artifact/vkpeak-source-revision.txt
+          cp .deps/nikki/emsdk-version.txt artifact/emsdk-version.txt
+          git -C .deps/ncnn rev-parse HEAD > artifact/ncnn-source-revision.txt
+          git -C .deps/vkpeak rev-parse HEAD > artifact/vkpeak-source-revision.txt
           cp test-results-*.json artifact/
           git diff --exit-code -- assets models backend-worker.mjs benchncnn-worker.mjs benchncnn-llm-worker.mjs vkpeak-worker.mjs app.js index.html
       - uses: actions/upload-artifact@v4

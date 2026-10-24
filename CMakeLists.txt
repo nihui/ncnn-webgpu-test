@@ -88,7 +88,7 @@ if(NCNN_WEBGPU_EXTRA_DEMOS)
         string(REPLACE "_" "-" stem "${kind}")
         set(target "${stem}-${backend}")
         add_demo_module(${target} "src/${kind}.cpp")
-        target_include_directories(${target} PRIVATE "${ncnn_ADAPTED_SOURCE_DIR}" "${NCNN_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+        target_include_directories(${target} PRIVATE "${ncnn_ADAPTED_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
         add_dependencies(${target} "${kind}-params")
         target_link_options(${target} PRIVATE -sEXIT_RUNTIME=1 -sMAXIMUM_MEMORY=4294967296
             "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_ncnn_benchmark_gpu_count','_ncnn_benchmark_gpu_name','_ncnn_benchmark_destroy_gpu_instance']"
@@ -99,10 +99,10 @@ if(NCNN_WEBGPU_EXTRA_DEMOS)
         prepare_upstream_sources(vkpeak "${VKPEAK_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/patches/vkpeak-webgpu.patch"
             vkpeak.cpp)
         add_demo_module(vkpeak-webgpu src/vkpeak.cpp)
-        target_include_directories(vkpeak-webgpu PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+        target_include_directories(vkpeak-webgpu PRIVATE "${vkpeak_ADAPTED_SOURCE_DIR}")
         # This no-GPU diagnostic uses the actual shim with device-lookup stubs.
         add_demo_module(vkpeak-capabilities tests/vkpeak-capabilities.cpp)
-        target_include_directories(vkpeak-capabilities PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+        target_include_directories(vkpeak-capabilities PRIVATE "${vkpeak_ADAPTED_SOURCE_DIR}")
         target_link_options(vkpeak-capabilities PRIVATE --no-entry
             "-sEXPORTED_FUNCTIONS=['_ncnn_vkpeak_test_capabilities']"
             "-sEXPORTED_RUNTIME_METHODS=['ccall']")

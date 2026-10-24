@@ -5,11 +5,11 @@
 #include <cmath>
 #include <cstring>
 
-// Built from nihui/vkpeak f37dab4c421781bf047face221dbaf6ae112a5e7.
+// Built from the pinned nihui/vkpeak source.
 // CMake copies the pinned source and applies patches/vkpeak-webgpu.patch.
 // Kernels, calibration, scoring and copies come from upstream, not this ABI shim.
 #define VKPEAK_LIBRARY
-#include <upstream/vkpeak/vkpeak.cpp>
+#include <vkpeak.cpp>
 #undef VKPEAK_LIBRARY
 
 namespace {
