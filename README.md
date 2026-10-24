@@ -1,10 +1,11 @@
 # ncnn WebGPU demo
 
 The checked-in UI, workers, models and CPU assets remain the demo baseline.
-The default build only produces the SqueezeNet WebGPU application pair. It does not
-build nikki from source, update the committed assets or deploy GitHub Pages.
+The reproducible build produces the SqueezeNet, benchncnn, benchncnn_llm and
+vkpeak WebGPU application pairs. It does not build nikki from source, update the
+committed assets or deploy GitHub Pages.
 
-## Rebuild SqueezeNet from a prebuilt nikki SDK
+## Rebuild the demos from a prebuilt nikki SDK
 
 Requirements: emsdk **6.0.12**, CMake >= 3.22, Ninja, Python >= 3.12, Git,
 Node >= 20, and curl. ncnn is fixed to
@@ -16,7 +17,7 @@ pinned Emdawnwebgpu port and Asyncify/Closure link settings through
 There is not yet a released SDK to pin as a default. Once the producer's release
 is explicitly approved and published, select its fixed **YYYYMMDD tag and full
 source commit**. Do not use a floating "latest" download. The
-`SqueezeNet prebuilt nikki consumer` manual workflow takes those required values,
+`WebGPU demos prebuilt nikki consumer` manual workflow takes those required values,
 downloads the public date-named SDK asset, checks the package version/source/
 toolchain, links the demo, runs tests and uploads the application pair. It needs
 no cross-repository token and does not publish a release or deploy Pages. A
@@ -28,15 +29,18 @@ export NIKKI_VERSION=<published-YYYYMMDD-tag>
 export NIKKI_REVISION=<full-producer-commit>
 tools/download-nikki.sh .deps/nikki
 export NIKKI_PREFIX="$PWD/.deps/nikki"
-tools/build-squeezenet.sh
+tools/build-webgpu.sh
 ```
 
 For an already downloaded SDK, omit the download step and set `NIKKI_PREFIX`
 and `NIKKI_REVISION`. `NCNN_SOURCE_DIR`, `BUILD_DIR` and `JOBS` may be overridden;
 existing ncnn checkouts must be clean at the pinned commit. Final-link optimizer
 concurrency defaults to `BINARYEN_CORES=1` to bound memory use; this does not lower
-optimization or disable Asyncify. Outputs are
-`build/assets/squeezenet-webgpu.mjs` and `.wasm`. Always keep the pair together.
+optimization or disable Asyncify. The script serializes the four final links.
+Outputs are `build/assets/{squeezenet,benchncnn,benchncnn-llm,vkpeak}-webgpu.mjs`
+and matching `.wasm` files. Always keep each pair together.
+`tools/build-squeezenet.sh` retains the minimal SqueezeNet-only entry point;
+`tools/build-webgpu.sh benchncnn-webgpu` builds just the named target.
 A missing/incomplete SDK is an error, never a request to silently rebuild nikki.
 Use a fresh build directory and an SDK rebuilt with emsdk 6.0.12 when upgrading
 from an older toolchain; do not reuse old object files or static archives.
@@ -45,18 +49,20 @@ from an older toolchain; do not reuse old object files or static archives.
 
 ```sh
 npm ci --prefix tests/browser --ignore-scripts
-node tests/check-module-abi.mjs build/assets/squeezenet-webgpu.mjs
+node tests/check-module-abi.mjs build/assets/*-webgpu.mjs
+node tests/check-vkpeak-contract.mjs build/assets/vkpeak-webgpu.mjs
 emcmake cmake -S . -B build-cpu-reference -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON \
+  -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON -DNCNN_WEBGPU_EXTRA_DEMOS=ON \
   -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
 cmake --build build-cpu-reference --parallel 2
 node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
-node tests/browser/run.mjs --chrome /path/to/chrome --module-dir build/assets
+node tests/check-benchmark-contract.mjs build-cpu-reference/assets
+node tests/browser/run.mjs --chrome /path/to/chrome --module-dir build/assets --extra-demos
 ```
 
 The ABI smoke check instantiates the linked pair and validates its exported
-functions, heap views, allocation and filesystem helpers without requesting a
-GPU. It does not prove browser or GPU inference.
+functions, heap views and allocation helpers without requesting a GPU or running
+benchmark main functions; it also checks SqueezeNet filesystem helpers. It does not prove browser or GPU inference.
 
 The Node CPU check compares the reconstructed CPU wrapper with the untouched scalar
 and SIMD CPU modules using the actual committed SqueezeNet model. The explicit
@@ -64,7 +70,7 @@ and SIMD CPU modules using the actual committed SqueezeNet model. The explicit
 fallback and never overwrites either CPU asset. Omitting the module argument
 checks only the old CPU modules, not the reconstructed wrapper. It is not browser
 or GPU validation. The browser check serves the original worker/UI assets locally and overlays only the newly
-built WebGPU pair. Test-only instrumentation records actual compute dispatches,
+built WebGPU pairs. Test-only instrumentation records actual compute dispatches,
 adapter identity, uncaptured WebGPU errors and unexpected device loss. No new
 pair is accepted by accidentally testing the old committed WebGPU assets.
 
@@ -95,6 +101,25 @@ means `(104,117,123)`, ten timed inferences and 1000 classes. The worker exposes
 only top-3 `(class, score)` pairs plus ten times and their minimum. The generated
 module retains malloc/free, ccall, HEAPU8/HEAPF32 and the two FS creation helpers.
 
-Benchmark, LLM and vkpeak sources/builds are intentionally outside this first
-step. Do not update their generated modules until this SqueezeNet path has been
-validated. No existing CPU module or UI is regenerated by this build.
+## Benchmark and vkpeak contracts
+
+`benchncnn-webgpu` and `benchncnn-llm-webgpu` retain the worker's automatic main,
+`onExit`/`onAbort`, `noInitialRun` device enumeration and `model=NAME` selection.
+Both use the pinned ncnn benchmark parameter graphs and synthetic zero weights,
+not downloaded model weights. Unknown models must fail rather than run the
+entire suite. Their maximum memory is 4 GiB, matching the committed modules.
+CPU diagnostic modules use distinct `*-reference` names and never replace the
+committed CPU assets.
+
+The focused CPU test checks a single blazeface iteration and CLI error handling;
+it does not run the large LLM benchmark. Browser `--extra-demos` additionally
+checks all three workers' adapter enumeration, runs one blazeface timing
+iteration with actual compute dispatch, and checks vkpeak's 12 scenario names
+and units. It does not run LLM model inference or the full vkpeak performance
+suite. Neither ABI checks nor device enumeration establish numerical accuracy
+or peak hardware performance. The vkpeak Node contract checks metadata, invalid
+arguments and embedded shader fidelity, not execution. The preserved `copy-h2d`
+and `copy-d2h` scenarios time mapped staging memcpy plus flush/invalidate, not
+submitted GPU transfers; do not present them as physical device bandwidth.
+The unchanged SqueezeNet parity test remains the
+numerical baseline. No existing CPU module or UI is regenerated by this build.

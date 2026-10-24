@@ -1,6 +1,6 @@
 # Copyright 2026 Tencent
 # SPDX-License-Identifier: BSD-3-Clause
-name: SqueezeNet prebuilt nikki consumer
+name: WebGPU demos prebuilt nikki consumer
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +17,7 @@ permissions:
 jobs:
   squeezenet:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       BINARYEN_CORES: '1'
       NIKKI_VERSION: ${{ inputs.nikki_version }}
@@ -39,43 +39,50 @@ jobs:
           npm ci --prefix tests/browser --ignore-scripts
       - name: Download the fixed public SDK release
         run: tools/download-nikki.sh .deps/nikki
-      - name: Link the application against the prebuilt SDK
+      - name: Link the applications against the prebuilt SDK
         env:
           NIKKI_PREFIX: .deps/nikki
-        run: tools/build-squeezenet.sh
+        run: tools/build-webgpu.sh
       - name: Check linked module ABI without GPU execution
         run: |
-          node tests/check-module-abi.mjs build/assets/squeezenet-webgpu.mjs > test-results-module-abi.json
+          node tests/check-module-abi.mjs build/assets/*-webgpu.mjs > test-results-module-abi.json
           cat test-results-module-abi.json
+          node tests/check-vkpeak-contract.mjs build/assets/vkpeak-webgpu.mjs > test-results-vkpeak-contract.json
+          cat test-results-vkpeak-contract.json
       - name: Build diagnostic CPU wrapper and compare against committed CPU modules
         run: |
           emcmake cmake -S . -B build-cpu-reference -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON \
+            -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON -DNCNN_WEBGPU_EXTRA_DEMOS=ON \
             -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
-          cmake --build build-cpu-reference --parallel 2
+          for target in squeezenet-reference benchncnn-reference benchncnn-llm-reference; do
+            cmake --build build-cpu-reference --target "$target" --parallel 2
+          done
           node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
+          node tests/check-benchmark-contract.mjs build-cpu-reference/assets > test-results-benchmark-contract.json
+          cat test-results-benchmark-contract.json
       - name: Verify worker ABI and CPU versus WebGPU results
         timeout-minutes: 40
         run: |
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          node tests/browser/run.mjs --chrome "$CHROME" --module-dir build/assets --output test-results-browser.json
-      - name: Package the pair and record the selected producer
+          node tests/browser/run.mjs --chrome "$CHROME" --module-dir build/assets --extra-demos --output test-results-browser.json
+      - name: Package the pairs and record the selected producer
         run: |
           mkdir -p artifact/assets
-          cp build/assets/squeezenet-webgpu.mjs build/assets/squeezenet-webgpu.wasm artifact/assets/
+          cp build/assets/*-webgpu.mjs build/assets/*-webgpu.wasm artifact/assets/
           printf '%s\n' "$NIKKI_REVISION" > artifact/nikki-source-revision.txt
           printf '%s\n' "$NIKKI_VERSION" > artifact/nikki-release-version.txt
+          printf '%s\n' 6.0.12 > artifact/emsdk-version.txt
           printf '%s\n' cb65ca26ba955bf456f3a26e13e9a644769fc4a4 > artifact/ncnn-source-revision.txt
           cp test-results-*.json artifact/
-          git diff --exit-code -- assets backend-worker.mjs app.js index.html
+          git diff --exit-code -- assets models backend-worker.mjs benchncnn-worker.mjs benchncnn-llm-worker.mjs vkpeak-worker.mjs app.js index.html
       - uses: actions/upload-artifact@v4
         with:
-          name: squeezenet-webgpu-${{ inputs.nikki_revision }}
+          name: ncnn-webgpu-${{ inputs.nikki_revision }}
           path: artifact/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: squeezenet-failure-results
+          name: webgpu-failure-results
           path: test-results-*.json
           if-no-files-found: ignore

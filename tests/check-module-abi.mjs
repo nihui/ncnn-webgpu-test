@@ -1,26 +1,38 @@
-// Instantiate the linked pair and inspect the worker-facing ABI without requesting
-// an adapter or running GPU inference. This is not a browser/WebGPU acceptance test.
+// Instantiate newly linked pairs and inspect worker-facing ABIs without requesting
+// an adapter or running GPU inference. This is not browser/WebGPU acceptance.
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-if (!process.argv[2]?.endsWith(".mjs")) throw new Error("Pass the newly linked .mjs module");
-const url = pathToFileURL(resolve(process.argv[2]));
-const factory = (await import(url.href)).default;
-const bytes = await readFile(new URL(url.href.replace(/\.mjs$/, ".wasm")));
-const module = await factory({ instantiateWasm(imports, receive) {
-    WebAssembly.instantiate(bytes, imports).then(({ instance, module }) => receive(instance, module));
-    return {};
-} });
-for (const name of ["_malloc", "_free", "ccall", "FS_createPath", "FS_createDataFile",
-    "_ncnn_squeezenet_gpu_count", "_ncnn_squeezenet_gpu_name", "_ncnn_squeezenet_init",
-    "_ncnn_squeezenet_infer", "_ncnn_squeezenet_destroy"]) {
-    if (typeof module[name] !== "function") throw new Error(`Missing ABI function ${name}`);
+const paths = process.argv.slice(2);
+if (!paths.length || paths.some((path) => !path.endsWith(".mjs"))) throw new Error("Pass one or more newly linked .mjs modules");
+const reports = [];
+for (const path of paths) {
+    const name = basename(path);
+    let functions;
+    if (name.startsWith("squeezenet-")) functions = ["ncnn_squeezenet_gpu_count", "ncnn_squeezenet_gpu_name", "ncnn_squeezenet_init", "ncnn_squeezenet_infer", "ncnn_squeezenet_destroy"];
+    else if (name.startsWith("benchncnn-")) functions = ["main", "ncnn_benchmark_gpu_count", "ncnn_benchmark_gpu_name", "ncnn_benchmark_destroy_gpu_instance"];
+    else if (name === "vkpeak-webgpu.mjs") functions = ["ncnn_vkpeak_gpu_count", "ncnn_vkpeak_gpu_name", "ncnn_vkpeak_scenario_count", "ncnn_vkpeak_scenario_name", "ncnn_vkpeak_scenario_unit", "ncnn_vkpeak_scenario_supported", "ncnn_vkpeak_run", "ncnn_vkpeak_destroy"];
+    else throw new Error(`Unknown module contract: ${name}`);
+    const url = pathToFileURL(resolve(path));
+    const factory = (await import(url.href)).default;
+    const bytes = await readFile(new URL(url.href.replace(/\.mjs$/, ".wasm")));
+    const module = await factory({ noInitialRun: true, instantiateWasm(imports, receive) {
+        WebAssembly.instantiate(bytes, imports).then(({ instance, module }) => receive(instance, module));
+        return {};
+    } });
+    for (const symbol of ["_malloc", "_free", "ccall", ...functions.map((name) => `_${name}`)]) {
+        if (typeof module[symbol] !== "function") throw new Error(`${name}: missing ABI function ${symbol}`);
+    }
+    if (!(module.HEAPU8 instanceof Uint8Array)) throw new Error(`${name}: missing byte heap`);
+    const pointer = module._malloc(17 * 4);
+    if (!pointer) throw new Error(`${name}: result allocation failed`);
+    module.HEAPU8.fill(0, pointer, pointer + 17 * 4);
+    module._free(pointer);
+    if (name.startsWith("squeezenet-")) {
+        if (!(module.HEAPF32 instanceof Float32Array)) throw new Error("Missing float heap");
+        module.FS_createPath("/", "abi-check", true, true);
+        module.FS_createDataFile("/abi-check", "probe", new Uint8Array([1]), true, false, true);
+    }
+    reports.push({ name, status: "pass", exportedFunctions: functions });
 }
-if (!(module.HEAPU8 instanceof Uint8Array) || !(module.HEAPF32 instanceof Float32Array)) throw new Error("Missing heap views");
-const pointer = module._malloc(17 * 4);
-if (!pointer) throw new Error("Result allocation failed");
-module.HEAPF32.fill(0, pointer / 4, pointer / 4 + 17);
-module._free(pointer);
-module.FS_createPath("/", "abi-check", true, true);
-module.FS_createDataFile("/abi-check", "probe", new Uint8Array([1]), true, false, true);
-console.log(JSON.stringify({ status: "pass", check: "linked module ABI and allocation/FS helpers", gpuInferenceExecuted: false }));
+console.log(JSON.stringify({ status: "pass", check: "linked module ABIs and allocation helpers", gpuInferenceExecuted: false, modules: reports }));

@@ -4,6 +4,7 @@
 <pre id="test-result">Running SqueezeNet worker acceptance tests…</pre>
 <script type="module">
 import { cases as fixtures, pixels, compareTop3, validateABI } from "../fixtures.mjs";
+import { runExtraDemos } from "./extra-demos.mjs";
 const parameters = new URL(location.href).searchParams;
 const backends = parameters.has("cpu-only") ? ["wasm", "wasm-simd"] : ["wasm", "wasm-simd", "webgpu"];
 const workers = new Map();
@@ -59,7 +60,8 @@ window.testDone = (async () => {
             for (const result of results.slice(1)) compareTop3(baseline, result.results, `${name} ${result.backend}`);
             cases.push({ name, width, height, results });
         }
-        return { status: "pass", devices, cases, comparison: "top-3 IDs exact; scores abs 0.002 + rel 0.02; not all 1000 logits", input: "deterministic RGBA fixtures; real committed SqueezeNet model" };
+        const extraDemos = parameters.has("extra-demos") ? await runExtraDemos() : null;
+        return { status: "pass", devices, cases, extraDemos, comparison: "top-3 IDs exact; scores abs 0.002 + rel 0.02; not all 1000 logits", input: "deterministic RGBA fixtures; real committed SqueezeNet model" };
     } catch (error) {
         return { status: "fail", error: error.stack || String(error), devices, cases };
     } finally {

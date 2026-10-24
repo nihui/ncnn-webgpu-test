@@ -15,13 +15,20 @@ function option(name, fallback = "") {
     return args[index + 1];
 }
 const cpuOnly = args.includes("--cpu-only");
+const extraDemos = args.includes("--extra-demos");
+if (cpuOnly && extraDemos) throw new Error("--extra-demos requires the newly built WebGPU modules");
+const query = new URLSearchParams();
+if (cpuOnly) query.set("cpu-only", "");
+if (extraDemos) query.set("extra-demos", "");
+const pagePath = `/tests/browser/harness.html?${query}`;
 const moduleDir = option("--module-dir");
 if (!cpuOnly && !moduleDir) throw new Error("--module-dir is required: do not accidentally test the old committed WebGPU asset");
 const chrome = option("--chrome", process.env.CHROME || "/usr/bin/chromium");
 const output = option("--output", "test-results.json");
 const timeout = Number(option("--timeout", "1800000"));
 const hardware = args.includes("--hardware");
-if (moduleDir) for (const ext of ["mjs", "wasm"]) await stat(resolve(moduleDir, `squeezenet-webgpu.${ext}`));
+const stems = ["squeezenet", ...(extraDemos ? ["benchncnn", "benchncnn-llm", "vkpeak"] : [])];
+if (moduleDir) for (const stem of stems) for (const ext of ["mjs", "wasm"]) await stat(resolve(moduleDir, `${stem}-webgpu.${ext}`));
 const mime = { ".html": "text/html", ".mjs": "text/javascript", ".js": "text/javascript", ".wasm": "application/wasm" };
 const server = createServer(async (request, response) => {
     try {
@@ -29,15 +36,15 @@ const server = createServer(async (request, response) => {
         if (pathname === "/favicon.ico") { response.writeHead(204).end(); return; }
         let path = resolve(root, `.${pathname}`);
         if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
-        if (moduleDir && /^\/assets\/squeezenet-webgpu\.(mjs|wasm)$/.test(pathname)) path = resolve(moduleDir, pathname.split("/").at(-1));
+        if (moduleDir && /^\/assets\/(squeezenet|benchncnn|benchncnn-llm|vkpeak)-webgpu\.(mjs|wasm)$/.test(pathname)) path = resolve(moduleDir, pathname.split("/").at(-1));
         let body = await readFile(path);
-        if (pathname === "/backend-worker.mjs") body = Buffer.concat([await readFile(resolve(root, "tests/browser/observe-worker.mjs")), Buffer.from("\n"), body]);
+        if (/^\/(backend|benchncnn|benchncnn-llm|vkpeak)-worker\.mjs$/.test(pathname)) body = Buffer.concat([await readFile(resolve(root, "tests/browser/observe-worker.mjs")), Buffer.from("\n"), body]);
         response.writeHead(200, { "Content-Type": mime[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" }).end(body);
     } catch { response.writeHead(404).end(); }
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 if (args.includes("--serve-only")) {
-    console.log(`http://127.0.0.1:${server.address().port}/tests/browser/harness.html${cpuOnly ? "?cpu-only" : ""}`);
+    console.log(`http://127.0.0.1:${server.address().port}${pagePath}`);
     console.log("Serving the acceptance page for an existing browser; press Ctrl-C to stop.");
     await new Promise(() => {});
 }
@@ -61,7 +68,7 @@ try {
     page.on("pageerror", (error) => errors.push(String(error)));
     page.on("requestfailed", (request) => errors.push(`${request.url()}: ${request.failure()?.errorText}`));
     page.setDefaultTimeout(timeout);
-    await page.goto(`http://127.0.0.1:${server.address().port}/tests/browser/harness.html${cpuOnly ? "?cpu-only" : ""}`);
+    await page.goto(`http://127.0.0.1:${server.address().port}${pagePath}`);
     report = await Promise.race([
         page.evaluate(() => window.testDone),
         new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error("SqueezeNet browser test timed out")), timeout); timer.unref(); }),
