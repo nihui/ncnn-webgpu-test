@@ -6,7 +6,7 @@ build nikki from source, update the committed assets or deploy GitHub Pages.
 
 ## Rebuild SqueezeNet from a prebuilt nikki SDK
 
-Requirements: emsdk **5.0.6**, CMake >= 3.22, Ninja, Python >= 3.12, Git,
+Requirements: emsdk **6.0.12**, CMake >= 3.22, Ninja, Python >= 3.12, Git,
 Node >= 20, and curl. ncnn is fixed to
 `cb65ca26ba955bf456f3a26e13e9a644769fc4a4`, including its glslang submodule.
 The nikki SDK supplies its matching Tint/SPIRV-Tools archives, Vulkan headers,
@@ -38,6 +38,8 @@ concurrency defaults to `BINARYEN_CORES=1` to bound memory use; this does not lo
 optimization or disable Asyncify. Outputs are
 `build/assets/squeezenet-webgpu.mjs` and `.wasm`. Always keep the pair together.
 A missing/incomplete SDK is an error, never a request to silently rebuild nikki.
+Use a fresh build directory and an SDK rebuilt with emsdk 6.0.12 when upgrading
+from an older toolchain; do not reuse old object files or static archives.
 
 ## Acceptance tests
 

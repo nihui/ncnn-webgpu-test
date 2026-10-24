@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [[ "$NIKKI_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'NIKKI_REVISION must be a full commit SHA' >&2; exit 1; }
 NIKKI_PREFIX="$(cd "$NIKKI_PREFIX" && pwd)"
 [[ "$(tr -d '\r\n' < "$NIKKI_PREFIX/source-revision.txt")" == "$NIKKI_REVISION" ]] || { echo 'nikki source revision mismatch' >&2; exit 1; }
-[[ "$(tr -d '\r\n' < "$NIKKI_PREFIX/emsdk-version.txt")" == "5.0.6" ]] || { echo 'nikki emsdk mismatch' >&2; exit 1; }
+[[ "$(tr -d '\r\n' < "$NIKKI_PREFIX/emsdk-version.txt")" == "6.0.12" ]] || { echo 'nikki emsdk mismatch' >&2; exit 1; }
 [[ -f "$NIKKI_PREFIX/lib/cmake/nikki/nikkiConfig.cmake" ]] || { echo 'Not an installed nikki SDK' >&2; exit 1; }
 NCNN_REVISION=cb65ca26ba955bf456f3a26e13e9a644769fc4a4
 NCNN_SOURCE_DIR="${NCNN_SOURCE_DIR:-$ROOT/.deps/ncnn}"

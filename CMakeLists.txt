@@ -4,12 +4,12 @@ cmake_minimum_required(VERSION 3.22)
 project(ncnn_webgpu_squeezenet LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-    message(FATAL_ERROR "Configure with emcmake and emsdk 5.0.6")
+    message(FATAL_ERROR "Configure with emcmake and emsdk 6.0.12")
 endif()
 execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -dumpversion
     OUTPUT_VARIABLE emsdk_version OUTPUT_STRIP_TRAILING_WHITESPACE)
-if(NOT emsdk_version STREQUAL "5.0.6")
-    message(FATAL_ERROR "This demo requires emsdk 5.0.6; got ${emsdk_version}")
+if(NOT emsdk_version STREQUAL "6.0.12")
+    message(FATAL_ERROR "This demo requires emsdk 6.0.12; got ${emsdk_version}")
 endif()
 
 option(SQUEEZENET_CPU_ORACLE "Build a diagnostic CPU wrapper, never replacing committed CPU assets" OFF)

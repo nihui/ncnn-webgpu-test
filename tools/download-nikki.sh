@@ -33,7 +33,7 @@ package = roots[0]
 require(package.name == f'nikki-{os.environ["NIKKI_VERSION"]}-wasm32-emscripten', 'Unexpected package root')
 require((package / 'release-version.txt').read_text().strip() == os.environ['NIKKI_VERSION'], 'Package version mismatch')
 require((package / 'source-revision.txt').read_text().strip() == os.environ['NIKKI_REVISION'], 'Package source SHA mismatch')
-require((package / 'emsdk-version.txt').read_text().strip() == '5.0.6', 'Package emsdk mismatch')
+require((package / 'emsdk-version.txt').read_text().strip() == '6.0.12', 'Package emsdk mismatch')
 require((package / 'lib/cmake/nikki/nikkiConfig.cmake').is_file(), 'Missing installed CMake package')
 shutil.move(str(package), destination)
 PY
