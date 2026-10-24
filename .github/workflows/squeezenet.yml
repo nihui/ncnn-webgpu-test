@@ -35,7 +35,7 @@ jobs:
       - name: Install runner and build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build
+          sudo apt-get install -y ninja-build patch
           npm ci --prefix tests/browser --ignore-scripts
       - name: Download the fixed public SDK release
         run: tools/download-nikki.sh .deps/nikki
@@ -49,6 +49,9 @@ jobs:
           cat test-results-module-abi.json
           node tests/check-vkpeak-contract.mjs build/assets/vkpeak-webgpu.mjs > test-results-vkpeak-contract.json
           cat test-results-vkpeak-contract.json
+          cmake --build build --target vkpeak-capabilities --parallel 2
+          node tests/check-vkpeak-capabilities.mjs build/tests/vkpeak-capabilities.mjs > test-results-vkpeak-capabilities.json
+          cat test-results-vkpeak-capabilities.json
       - name: Build diagnostic CPU wrapper and compare against committed CPU modules
         run: |
           emcmake cmake -S . -B build-cpu-reference -G Ninja \
@@ -60,6 +63,8 @@ jobs:
           node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
           node tests/check-benchmark-contract.mjs build-cpu-reference/assets > test-results-benchmark-contract.json
           cat test-results-benchmark-contract.json
+          c++ -std=c++11 tests/benchmark-device-validation.cpp -o build-cpu-reference/benchmark-device-validation
+          build-cpu-reference/benchmark-device-validation
       - name: Verify worker ABI and CPU versus WebGPU results
         timeout-minutes: 40
         run: |
@@ -73,6 +78,7 @@ jobs:
           printf '%s\n' "$NIKKI_VERSION" > artifact/nikki-release-version.txt
           printf '%s\n' 6.0.12 > artifact/emsdk-version.txt
           printf '%s\n' cb65ca26ba955bf456f3a26e13e9a644769fc4a4 > artifact/ncnn-source-revision.txt
+          printf '%s\n' f37dab4c421781bf047face221dbaf6ae112a5e7 > artifact/vkpeak-source-revision.txt
           cp test-results-*.json artifact/
           git diff --exit-code -- assets models backend-worker.mjs benchncnn-worker.mjs benchncnn-llm-worker.mjs vkpeak-worker.mjs app.js index.html
       - uses: actions/upload-artifact@v4

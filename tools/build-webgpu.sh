@@ -15,6 +15,8 @@ NIKKI_PREFIX="$(cd "$NIKKI_PREFIX" && pwd)"
 NCNN_REVISION=cb65ca26ba955bf456f3a26e13e9a644769fc4a4
 NCNN_SOURCE_DIR="${NCNN_SOURCE_DIR:-$ROOT/.deps/ncnn}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
+VKPEAK_REVISION=f37dab4c421781bf047face221dbaf6ae112a5e7
+VKPEAK_SOURCE_DIR="${VKPEAK_SOURCE_DIR:-$ROOT/.deps/vkpeak}"
 if [[ ! -e "$NCNN_SOURCE_DIR" ]]; then
     git clone --no-checkout https://github.com/Tencent/ncnn.git "$NCNN_SOURCE_DIR"
     git -C "$NCNN_SOURCE_DIR" checkout --detach "$NCNN_REVISION"
@@ -22,9 +24,17 @@ if [[ ! -e "$NCNN_SOURCE_DIR" ]]; then
 fi
 [[ "$(git -C "$NCNN_SOURCE_DIR" rev-parse HEAD)" == "$NCNN_REVISION" ]] || { echo 'ncnn revision mismatch' >&2; exit 1; }
 [[ -z "$(git -C "$NCNN_SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || { echo 'ncnn checkout has local changes' >&2; exit 1; }
+if [[ "${NCNN_WEBGPU_EXTRA_DEMOS:-ON}" == ON ]]; then
+    if [[ ! -e "$VKPEAK_SOURCE_DIR" ]]; then
+        git clone --no-checkout https://github.com/nihui/vkpeak.git "$VKPEAK_SOURCE_DIR"
+        git -C "$VKPEAK_SOURCE_DIR" checkout --detach "$VKPEAK_REVISION"
+    fi
+    [[ "$(git -C "$VKPEAK_SOURCE_DIR" rev-parse HEAD)" == "$VKPEAK_REVISION" ]] || { echo 'vkpeak revision mismatch' >&2; exit 1; }
+    [[ -z "$(git -C "$VKPEAK_SOURCE_DIR" status --porcelain --untracked-files=no)" ]] || { echo 'vkpeak checkout has local changes' >&2; exit 1; }
+fi
 emcmake cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -Dnikki_DIR="$NIKKI_PREFIX/lib/cmake/nikki" \
-    -DNCNN_SOURCE_DIR="$NCNN_SOURCE_DIR" -DSQUEEZENET_CPU_ORACLE=OFF \
+    -DNCNN_SOURCE_DIR="$NCNN_SOURCE_DIR" -DVKPEAK_SOURCE_DIR="$VKPEAK_SOURCE_DIR" -DSQUEEZENET_CPU_ORACLE=OFF \
     -DNCNN_WEBGPU_EXTRA_DEMOS="${NCNN_WEBGPU_EXTRA_DEMOS:-ON}"
 if [[ $# == 0 ]]; then
     set -- squeezenet-webgpu benchncnn-webgpu benchncnn-llm-webgpu vkpeak-webgpu

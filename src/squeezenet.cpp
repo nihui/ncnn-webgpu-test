@@ -1,5 +1,8 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
+// Browser ABI bridge for ncnn/examples/squeezenet.cpp at the pinned ncnn revision.
+// Keep ncnn's resize/mean/Net/Extractor operations; the browser needs persistent
+// model state, RGBA input, and a 17-float result instead of the OpenCV CLI.
 
 #include "benchmark.h"
 #include "net.h"
@@ -71,6 +74,9 @@ int ncnn_squeezenet_init(int gpu_index)
     const int count = ensure_gpu_instance();
     if (count <= 0 || gpu_index < 0 || gpu_index >= count)
         return -1;
+    const ncnn::VulkanDevice* device = ncnn::get_gpu_device(gpu_index);
+    if (!device || !device->is_valid())
+        return -1;
 #else
     (void)gpu_index;
 #endif
@@ -79,7 +85,7 @@ int ncnn_squeezenet_init(int gpu_index)
     candidate->opt.num_threads = 1;
 #if NCNN_VULKAN
     candidate->opt.use_vulkan_compute = true;
-    candidate->set_vulkan_device(gpu_index);
+    candidate->set_vulkan_device(device);
 #endif
     if (candidate->load_param("/models/squeezenet_v1.1.param") != 0 ||
         candidate->load_model("/models/squeezenet_v1.1.bin") != 0)

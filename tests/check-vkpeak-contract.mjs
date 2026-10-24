@@ -3,7 +3,8 @@
 
 // No adapter is requested and no benchmark runs. This compares worker-facing
 // metadata, string-buffer boundaries and invalid-scenario handling with the
-// unchanged committed module, not browser/GPU performance or correctness.
+// unchanged committed module. Scores now use pinned upstream vkpeak rather than
+// the old browser engine; this is not browser/GPU performance or correctness.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -72,9 +73,8 @@ async function inspect(url) {
 }
 
 assert.deepEqual(await inspect(candidateUrl), await inspect(baselineUrl));
-const baselineWasm = await readFile(new URL("../assets/vkpeak-webgpu.wasm", import.meta.url));
-const shaderHeader = await readFile(new URL("../src/vkpeak_shaders.h", import.meta.url), "utf8");
-const shaders = [...shaderHeader.matchAll(/R"\(([\s\S]*?)\)";/g)];
-assert.equal(shaders.length, 8);
-for (const [, shader] of shaders) assert.ok(baselineWasm.includes(Buffer.from(shader)), "Shader differs from baseline WASM");
-console.log(JSON.stringify({ status: "pass", check: "vkpeak metadata, buffer boundaries, invalid scenarios and original GLSL", scenarios: names.length, gpuBenchmarkExecuted: false }));
+const candidateWasm = await readFile(new URL(candidateUrl.href.replace(/\.mjs$/, ".wasm")));
+// This single-chain fp32 kernel comes from upstream, not the previous browser
+// engine. Do not depend on unsupported int8 kernels surviving dead-code removal.
+assert.ok(candidateWasm.includes(Buffer.from("    afp c = afp(gx);\n\n    afp a = c;")), "Missing upstream vkpeak shader");
+console.log(JSON.stringify({ status: "pass", check: "vkpeak metadata, buffer boundaries, invalid scenarios and upstream shader presence", scenarios: names.length, gpuBenchmarkExecuted: false }));

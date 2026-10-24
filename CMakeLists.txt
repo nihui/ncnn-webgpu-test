@@ -28,6 +28,9 @@ set(NCNN_SOURCE_DIR "" CACHE PATH "Pinned ncnn checkout (including its glslang s
 if(NOT EXISTS "${NCNN_SOURCE_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "Set NCNN_SOURCE_DIR to the checkout prepared by tools/build-squeezenet.sh")
 endif()
+include(cmake/UpstreamSources.cmake)
+require_upstream_checkout(ncnn "${NCNN_SOURCE_DIR}" cb65ca26ba955bf456f3a26e13e9a644769fc4a4)
+set(VKPEAK_SOURCE_DIR "" CACHE PATH "Pinned nihui/vkpeak checkout")
 if(SQUEEZENET_CPU_ORACLE)
     set(NCNN_VULKAN OFF CACHE BOOL "" FORCE)
 else()
@@ -71,6 +74,8 @@ target_link_options(${application} PRIVATE --no-entry -sFORCE_FILESYSTEM=1
 
 option(NCNN_WEBGPU_EXTRA_DEMOS "Also build benchncnn, benchncnn_llm and vkpeak" OFF)
 if(NCNN_WEBGPU_EXTRA_DEMOS)
+    prepare_upstream_sources(ncnn "${NCNN_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/patches/ncnn-benchmarks.patch"
+        benchmark/benchncnn.cpp benchmark/benchncnn_llm.cpp)
     include(cmake/BenchmarkParams.cmake)
     generate_benchmark_params(benchncnn "${NCNN_SOURCE_DIR}/benchmark/models")
     generate_benchmark_params(benchncnn_llm "${NCNN_SOURCE_DIR}/benchmark/models/llm")
@@ -83,14 +88,26 @@ if(NCNN_WEBGPU_EXTRA_DEMOS)
         string(REPLACE "_" "-" stem "${kind}")
         set(target "${stem}-${backend}")
         add_demo_module(${target} "src/${kind}.cpp")
-        target_include_directories(${target} PRIVATE "${NCNN_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+        target_include_directories(${target} PRIVATE "${ncnn_ADAPTED_SOURCE_DIR}" "${NCNN_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
         add_dependencies(${target} "${kind}-params")
         target_link_options(${target} PRIVATE -sEXIT_RUNTIME=1 -sMAXIMUM_MEMORY=4294967296
             "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_ncnn_benchmark_gpu_count','_ncnn_benchmark_gpu_name','_ncnn_benchmark_destroy_gpu_instance']"
             "-sEXPORTED_RUNTIME_METHODS=['ccall','callMain','HEAPU8']")
     endforeach()
     if(NOT SQUEEZENET_CPU_ORACLE)
+        require_upstream_checkout(vkpeak "${VKPEAK_SOURCE_DIR}" f37dab4c421781bf047face221dbaf6ae112a5e7)
+        prepare_upstream_sources(vkpeak "${VKPEAK_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/patches/vkpeak-webgpu.patch"
+            vkpeak.cpp)
         add_demo_module(vkpeak-webgpu src/vkpeak.cpp)
+        target_include_directories(vkpeak-webgpu PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+        # This no-GPU diagnostic uses the actual shim with device-lookup stubs.
+        add_demo_module(vkpeak-capabilities tests/vkpeak-capabilities.cpp)
+        target_include_directories(vkpeak-capabilities PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+        target_link_options(vkpeak-capabilities PRIVATE --no-entry
+            "-sEXPORTED_FUNCTIONS=['_ncnn_vkpeak_test_capabilities']"
+            "-sEXPORTED_RUNTIME_METHODS=['ccall']")
+        set_target_properties(vkpeak-capabilities PROPERTIES EXCLUDE_FROM_ALL TRUE
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
         target_link_options(vkpeak-webgpu PRIVATE --no-entry
             "-sEXPORTED_FUNCTIONS=['_malloc','_free','_ncnn_vkpeak_gpu_count','_ncnn_vkpeak_gpu_name','_ncnn_vkpeak_scenario_count','_ncnn_vkpeak_scenario_name','_ncnn_vkpeak_scenario_unit','_ncnn_vkpeak_scenario_supported','_ncnn_vkpeak_run','_ncnn_vkpeak_destroy']"
             "-sEXPORTED_RUNTIME_METHODS=['ccall','HEAPU8']")

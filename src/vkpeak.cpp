@@ -1,18 +1,16 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "benchmark.h"
-#include "command.h"
-#include "gpu.h"
-#include "mat.h"
-#include "pipeline.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <vector>
 
-#include "vkpeak_shaders.h"
+// Built from nihui/vkpeak f37dab4c421781bf047face221dbaf6ae112a5e7.
+// CMake copies the pinned source and applies patches/vkpeak-webgpu.patch.
+// Kernels, calibration, scoring and copies come from upstream, not this ABI shim.
+#define VKPEAK_LIBRARY
+#include <upstream/vkpeak/vkpeak.cpp>
+#undef VKPEAK_LIBRARY
 
 namespace {
 
@@ -22,25 +20,26 @@ struct Scenario
 {
     const char* name;
     const char* unit;
+    int storage;
     int arithmetic;
     int packing;
-    int copy;
+    bool copy;
 };
 
-// Keep the order and units used by the committed worker/module, including GBPS.
+// The existing worker exposes this subset of upstream's scenario table.
 const Scenario scenarios[] = {
-    {"fp32-scalar", "GFLOPS", 0, 1, 0},
-    {"fp32-vec4", "GFLOPS", 0, 4, 0},
-    {"fp16-scalar", "GFLOPS", 1, 1, 0},
-    {"fp16-vec4", "GFLOPS", 1, 4, 0},
-    {"fp16-matrix", "GFLOPS", 4, 256, 0},
-    {"int32-scalar", "GIOPS", 2, 1, 0},
-    {"int32-vec4", "GIOPS", 2, 4, 0},
-    {"int8-dotprod", "GIOPS", 3, 4, 0},
-    {"int8-matrix", "GIOPS", 5, 256, 0},
-    {"copy-h2d", "GBPS", 0, 0, 1},
-    {"copy-d2h", "GBPS", 0, 0, 2},
-    {"copy-d2d", "GBPS", 0, 0, 3},
+    {"fp32-scalar", "GFLOPS", 0, 0, 1, false},
+    {"fp32-vec4", "GFLOPS", 0, 0, 4, false},
+    {"fp16-scalar", "GFLOPS", 0, 1, 1, false},
+    {"fp16-vec4", "GFLOPS", 0, 1, 4, false},
+    {"fp16-matrix", "GFLOPS", 1, 1, 256, false},
+    {"int32-scalar", "GIOPS", 3, 3, 1, false},
+    {"int32-vec4", "GIOPS", 3, 3, 4, false},
+    {"int8-dotprod", "GIOPS", 3, 6, 4, false},
+    {"int8-matrix", "GIOPS", 3, 6, 256, false},
+    {"copy-h2d", "GBPS", 0, 1, 0, true},
+    {"copy-d2h", "GBPS", 1, 0, 0, true},
+    {"copy-d2d", "GBPS", 1, 1, 0, true},
 };
 
 int scenario_count()
@@ -70,260 +69,58 @@ int copy_string(const char* source, char* destination, int capacity)
     return static_cast<int>(length);
 }
 
-struct MatrixShape
+template<typename GpuInfo>
+bool matrix_supported(const GpuInfo& info, bool fp16)
 {
-    int m = 0;
-    int n = 0;
-    int k = 0;
-    int scope = VK_SCOPE_SUBGROUP_KHR;
-    int element_size = 4;
-    bool fp32_accumulator = false;
-};
-
-bool find_matrix_shape(const ncnn::GpuInfo& info, int arithmetic, MatrixShape& shape)
-{
-    if (!info.support_cooperative_matrix() || !info.support_VK_KHR_cooperative_matrix())
-        return false;
-    if (arithmetic == 4 && !info.support_fp16_arithmetic())
-        return false;
-
-    const std::vector<VkCooperativeMatrixPropertiesKHR>& properties = info.queryCooperativeMatrixSubProperties();
-    // The browser baseline prefers fp16 accumulation, with fp32 as a fallback.
-    for (int pass = 0; pass < (arithmetic == 4 ? 2 : 1); pass++)
+    // Match the KHR/NV component types and scopes selected by upstream vkpeak().
+    const VkComponentTypeKHR input = fp16 ? VK_COMPONENT_TYPE_FLOAT16_KHR : VK_COMPONENT_TYPE_SINT8_KHR;
+    if (info.support_VK_KHR_cooperative_matrix())
     {
-        if (arithmetic == 4 && pass == 0 && !info.support_fp16_storage())
-            continue;
-        const VkComponentTypeKHR input = arithmetic == 4 ? VK_COMPONENT_TYPE_FLOAT16_KHR : VK_COMPONENT_TYPE_SINT8_KHR;
-        const VkComponentTypeKHR accumulator = arithmetic == 4
-            ? (pass == 0 ? VK_COMPONENT_TYPE_FLOAT16_KHR : VK_COMPONENT_TYPE_FLOAT32_KHR)
-            : VK_COMPONENT_TYPE_SINT32_KHR;
-        for (size_t i = 0; i < properties.size(); i++)
+        for (const VkCooperativeMatrixPropertiesKHR& property : info.queryCooperativeMatrixSubProperties())
         {
-            const VkCooperativeMatrixPropertiesKHR& property = properties[i];
-            if (property.AType != input || property.BType != input ||
-                property.CType != accumulator || property.ResultType != accumulator ||
-                property.scope != VK_SCOPE_SUBGROUP_KHR)
-                continue;
-            shape.m = property.MSize;
-            shape.n = property.NSize;
-            shape.k = property.KSize;
-            shape.element_size = accumulator == VK_COMPONENT_TYPE_FLOAT16_KHR ? 2 : 4;
-            shape.fp32_accumulator = arithmetic == 4 && pass == 1;
-            return shape.m > 0 && shape.n > 0 && shape.k > 0;
+            const bool accumulator = fp16 ? property.CType == VK_COMPONENT_TYPE_FLOAT16_KHR || property.CType == VK_COMPONENT_TYPE_FLOAT32_KHR
+                                          : property.CType == VK_COMPONENT_TYPE_SINT32_KHR;
+            if (property.AType == input && property.BType == input && accumulator && property.CType == property.ResultType &&
+                (property.scope == VK_SCOPE_SUBGROUP_KHR || property.scope == VK_SCOPE_WORKGROUP_KHR))
+                return true;
+        }
+    }
+    else if (info.support_VK_NV_cooperative_matrix())
+    {
+        const VkComponentTypeNV nv_input = fp16 ? VK_COMPONENT_TYPE_FLOAT16_NV : VK_COMPONENT_TYPE_SINT8_NV;
+        for (const VkCooperativeMatrixPropertiesNV& property : info.queryCooperativeMatrixSubPropertiesNV())
+        {
+            const bool accumulator = fp16 ? property.CType == VK_COMPONENT_TYPE_FLOAT16_NV || property.CType == VK_COMPONENT_TYPE_FLOAT32_NV
+                                          : property.CType == VK_COMPONENT_TYPE_SINT32_NV;
+            if (property.AType == nv_input && property.BType == nv_input && accumulator && property.CType == property.DType &&
+                (property.scope == VK_SCOPE_SUBGROUP_NV || property.scope == VK_SCOPE_WORKGROUP_NV))
+                return true;
         }
     }
     return false;
 }
 
-bool supported(const ncnn::GpuInfo& info, const Scenario& scenario)
+template<typename GpuInfo>
+bool supported(const GpuInfo& info, const Scenario& scenario)
 {
-    if (scenario.arithmetic == 1)
-        return info.support_fp16_arithmetic();
-    if (scenario.arithmetic == 3)
-        return info.queryShaderIntegerDotProductFeatures().shaderIntegerDotProduct &&
-               info.queryShaderIntegerDotProductProperties().integerDotProduct4x8BitPackedSignedAccelerated;
-    if (scenario.packing == 256)
+    if (scenario.copy)
+        return true;
+    if (scenario.storage == 1 && !info.support_fp16_storage())
+        return false;
+    if (scenario.arithmetic == 1 && !info.support_fp16_arithmetic())
+        return false;
+    if (scenario.arithmetic == 6)
     {
-        MatrixShape shape;
-        return find_matrix_shape(info, scenario.arithmetic, shape);
+        // Upstream's single/dual kernels use OpSDotAccSat. The current nikki
+        // translator supports plain packed dot, but rejects saturating dot.
+        // Keep the upstream arithmetic intact instead of publishing a different
+        // kernel's score under the same scenario name.
+        if (scenario.packing == 4)
+            return false;
+        if (!info.support_int8_arithmetic())
+            return false;
     }
-    return true;
-}
-
-// Declare this before matrices/commands so they release their allocations first.
-struct Allocators
-{
-    explicit Allocators(ncnn::VulkanDevice* device, bool use_staging = false)
-        : device(device), blob(device->acquire_blob_allocator()),
-          staging(use_staging ? device->acquire_staging_allocator() : 0)
-    {
-    }
-    ~Allocators()
-    {
-        if (staging)
-            device->reclaim_staging_allocator(staging);
-        if (blob)
-            device->reclaim_blob_allocator(blob);
-    }
-    ncnn::VulkanDevice* device;
-    ncnn::VkAllocator* blob;
-    ncnn::VkAllocator* staging;
-};
-
-double run_compute(ncnn::VulkanDevice* device, int gpu_index, const Scenario& scenario)
-{
-    const bool matrix = scenario.packing == 256;
-    MatrixShape shape;
-    if (matrix && !find_matrix_shape(device->info, scenario.arithmetic, shape))
-        return 0;
-
-    ncnn::Option option;
-    option.use_vulkan_compute = true;
-    option.vulkan_device_index = gpu_index;
-    option.use_fp16_storage = scenario.arithmetic == 4 && !shape.fp32_accumulator;
-    option.use_fp16_arithmetic = scenario.arithmetic == 1 || scenario.arithmetic == 4;
-    option.use_cooperative_matrix = matrix;
-
-    const char* shader = 0;
-    if (scenario.arithmetic == 4)
-        shader = shape.fp32_accumulator ? glsl_fp16_fp32_matrix : glsl_fp16_matrix;
-    else if (scenario.arithmetic == 5)
-        shader = glsl_int8_matrix;
-    else if (scenario.arithmetic == 3)
-        shader = glsl_int8_dotprod;
-    else if (scenario.arithmetic == 2)
-        shader = scenario.packing == 1 ? glsl_int_scalar : glsl_int_vec4;
-    else
-        shader = scenario.packing == 1 ? glsl_fp_scalar : glsl_fp_vec4;
-
-    std::vector<uint32_t> spirv;
-    if (ncnn::compile_spirv_module(shader, std::strlen(shader), option, spirv) != 0 || spirv.empty())
-        return 0;
-
-    const int local_size = std::min(128, std::max(1, static_cast<int>(device->info.subgroup_size())));
-    ncnn::Pipeline pipeline(device);
-    pipeline.set_local_size_xyz(local_size, 1, 1);
-    std::vector<ncnn::vk_specialization_type> specializations(matrix ? 5 : 1);
-    specializations[0].i = 64;
-    if (matrix)
-    {
-        specializations[1].i = shape.m;
-        specializations[2].i = shape.n;
-        specializations[3].i = shape.k;
-        specializations[4].i = shape.scope;
-    }
-    if (pipeline.create(spirv.data(), spirv.size() * sizeof(uint32_t), specializations) != 0)
-        return 0;
-
-    // Recovered browser limits: at most 1M invocations, 16 MiB matrix output,
-    // 64 shader iterations, and no more than 64 dispatches in one submission.
-    size_t maximum = std::min<size_t>(1024 * 1024,
-        static_cast<size_t>(local_size) * device->info.physicalDeviceProperties().limits.maxComputeWorkGroupCount[0]);
-    const size_t matrix_bytes = static_cast<size_t>(shape.m) * shape.n * shape.element_size;
-    if (matrix)
-        maximum = std::min(maximum, std::max<size_t>(1, 16 * 1024 * 1024 / matrix_bytes) * local_size);
-    maximum = std::max<size_t>(local_size, maximum - maximum % local_size);
-    const size_t buffer_bytes = matrix ? maximum / local_size * matrix_bytes : maximum * 4;
-    Allocators allocators(device);
-    if (!allocators.blob)
-        return 0;
-    ncnn::VkMat output(static_cast<int>(buffer_bytes), static_cast<size_t>(1), 1, allocators.blob);
-    if (output.empty())
-        return 0;
-
-    int invocations = static_cast<int>(std::min<size_t>(local_size * 64, maximum));
-    int dispatches = 1;
-    // Calibrate toward 120 ms, bounded to sixteen submissions, then keep the
-    // best of five timed submissions. Only submit_and_wait is timed.
-    for (int attempt = 0; attempt < 16; attempt++)
-    {
-        ncnn::VkCompute command(device);
-        std::vector<ncnn::VkMat> bindings(1, output);
-        std::vector<ncnn::vk_constant_type> constants;
-        ncnn::VkMat dispatcher;
-        dispatcher.w = invocations;
-        dispatcher.h = dispatcher.c = 1;
-        for (int i = 0; i < dispatches; i++)
-            command.record_pipeline(&pipeline, bindings, constants, dispatcher);
-        const double start = ncnn::get_current_time();
-        if (command.submit_and_wait() != 0)
-            return 0;
-        if (ncnn::get_current_time() - start >= 120)
-            break;
-        if (static_cast<size_t>(invocations) < maximum)
-            invocations = static_cast<int>(std::min<size_t>(invocations * 2, maximum));
-        else if (dispatches < 64)
-            dispatches *= 2;
-        else
-            break;
-    }
-
-    double operations = static_cast<double>(invocations) * dispatches * 64 * 16 * 2;
-    operations *= matrix ? static_cast<double>(shape.m) * shape.n * shape.k / local_size : scenario.packing;
-    double best = 0;
-    for (int trial = 0; trial < 5; trial++)
-    {
-        ncnn::VkCompute command(device);
-        std::vector<ncnn::VkMat> bindings(1, output);
-        std::vector<ncnn::vk_constant_type> constants;
-        ncnn::VkMat dispatcher;
-        dispatcher.w = invocations;
-        dispatcher.h = dispatcher.c = 1;
-        for (int i = 0; i < dispatches; i++)
-            command.record_pipeline(&pipeline, bindings, constants, dispatcher);
-        const double start = ncnn::get_current_time();
-        if (command.submit_and_wait() != 0)
-            return 0;
-        const double elapsed = ncnn::get_current_time() - start;
-        if (elapsed > 0)
-            best = std::max(best, operations / elapsed / 1000000);
-    }
-    return best;
-}
-
-double run_copy(ncnn::VulkanDevice* device, int gpu_index, int mode)
-{
-    const int bytes = 32 * 1024 * 1024;
-    Allocators allocators(device, true);
-    if (!allocators.blob || !allocators.staging)
-        return 0;
-    ncnn::Option option;
-    option.use_vulkan_compute = true;
-    option.vulkan_device_index = gpu_index;
-    option.blob_vkallocator = option.workspace_vkallocator = allocators.blob;
-    option.staging_vkallocator = allocators.staging;
-    double best = 0;
-    if (mode == 3)
-    {
-        ncnn::VkMat source(bytes, static_cast<size_t>(1), 1, allocators.blob);
-        ncnn::VkMat destination(bytes, static_cast<size_t>(1), 1, allocators.blob);
-        if (source.empty() || destination.empty())
-            return 0;
-        for (int trial = 0; trial < 8; trial++)
-        {
-            ncnn::VkCompute command(device);
-            command.record_clone(source, destination, option);
-            const double start = ncnn::get_current_time();
-            if (command.submit_and_wait() != 0)
-                return 0;
-            const double elapsed = ncnn::get_current_time() - start;
-            if (elapsed > 0)
-                best = std::max(best, bytes / elapsed / 1000000);
-        }
-    }
-    else
-    {
-        // Preserve the browser baseline's host-copy metric: mapped staging
-        // memory plus flush/invalidate, not a submitted device transfer.
-        ncnn::VkMat buffer(bytes, static_cast<size_t>(1), 1, allocators.staging);
-        ncnn::Mat host(bytes, static_cast<size_t>(1), 1);
-        if (buffer.empty() || host.empty())
-            return 0;
-        void* mapped = buffer.mapped_ptr();
-        if (!mapped)
-            return 0;
-        std::memset(host.data, 0, bytes);
-        for (int trial = 0; trial < 8; trial++)
-        {
-            const double start = ncnn::get_current_time();
-            if (mode == 1)
-            {
-                std::memcpy(mapped, host.data, bytes);
-                if (allocators.staging->flush(buffer.data) != 0)
-                    return 0;
-            }
-            else
-            {
-                if (allocators.staging->invalidate(buffer.data) != 0)
-                    return 0;
-                std::memcpy(host.data, mapped, bytes);
-            }
-            const double elapsed = ncnn::get_current_time() - start;
-            if (elapsed > 0)
-                best = std::max(best, bytes / elapsed / 1000000);
-        }
-    }
-    return best;
+    return scenario.packing != 256 || (info.support_cooperative_matrix() && matrix_supported(info, scenario.arithmetic == 1));
 }
 
 } // namespace
@@ -376,11 +173,12 @@ double ncnn_vkpeak_run(int gpu_index, int index)
 {
     if (ncnn_vkpeak_scenario_supported(gpu_index, index) != 1)
         return -1;
-    ncnn::VulkanDevice* device = ncnn::get_gpu_device(gpu_index);
-    if (!device)
+    const ncnn::VulkanDevice* device = ncnn::get_gpu_device(gpu_index);
+    if (!device || !device->is_valid())
         return 0;
     const Scenario& scenario = scenarios[index];
-    const double score = scenario.copy ? run_copy(device, gpu_index, scenario.copy) : run_compute(device, gpu_index, scenario);
+    const double score = scenario.copy ? vkpeak_copy(gpu_index, scenario.storage, scenario.arithmetic)
+                                      : vkpeak(gpu_index, scenario.storage, scenario.arithmetic, scenario.packing);
     return std::isfinite(score) && score > 0 ? score : 0;
 }
 

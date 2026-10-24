@@ -88,7 +88,9 @@ if (process.argv[2] === "--case") {
                 if (name === "benchncnn-llm") {
                     const result = await run(path, "run", args("qwen2.5_0.5b_int8g32", "0"));
                     assert.notEqual(result.exitStatus, 0);
-                    assert.ok(result.lines.some((line) => line.includes("not supported by this WebGPU benchmark")));
+                    // Device validation runs before upstream model selection. This CPU
+                    // diagnostic must reject the request rather than fall back to CPU.
+                    assert.ok(result.lines.some((line) => line.includes("no WebGPU backend")));
                     assert.equal(result.lines.filter((line) => pattern.test(line)).length, 0);
                 }
             }

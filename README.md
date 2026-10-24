@@ -8,8 +8,12 @@ committed assets or deploy GitHub Pages.
 ## Rebuild the demos from a prebuilt nikki SDK
 
 Requirements: emsdk **6.0.12**, CMake >= 3.22, Ninja, Python >= 3.12, Git,
-Node >= 20, and curl. ncnn is fixed to
+Node >= 20, curl, and GNU patch. ncnn is fixed to
 `cb65ca26ba955bf456f3a26e13e9a644769fc4a4`, including its glslang submodule.
+[nihui/vkpeak](https://github.com/nihui/vkpeak) is fixed to
+`f37dab4c421781bf047face221dbaf6ae112a5e7`. The build fetches these source
+checkouts if absent and rejects a different revision or tracked local changes.
+Only nikki is consumed as a prebuilt SDK; ncnn and vkpeak are upstream sources.
 The nikki SDK supplies its matching Tint/SPIRV-Tools archives, Vulkan headers,
 pinned Emdawnwebgpu port and Asyncify/Closure link settings through
 `nikki::static`. Its port may download the pinned Emdawn runtime on first link.
@@ -33,7 +37,8 @@ tools/build-webgpu.sh
 ```
 
 For an already downloaded SDK, omit the download step and set `NIKKI_PREFIX`
-and `NIKKI_REVISION`. `NCNN_SOURCE_DIR`, `BUILD_DIR` and `JOBS` may be overridden;
+and `NIKKI_REVISION`. `NCNN_SOURCE_DIR`, `VKPEAK_SOURCE_DIR`, `BUILD_DIR` and
+`JOBS` may be overridden;
 existing ncnn checkouts must be clean at the pinned commit. Final-link optimizer
 concurrency defaults to `BINARYEN_CORES=1` to bound memory use; this does not lower
 optimization or disable Asyncify. The script serializes the four final links.
@@ -51,6 +56,8 @@ from an older toolchain; do not reuse old object files or static archives.
 npm ci --prefix tests/browser --ignore-scripts
 node tests/check-module-abi.mjs build/assets/*-webgpu.mjs
 node tests/check-vkpeak-contract.mjs build/assets/vkpeak-webgpu.mjs
+cmake --build build --target vkpeak-capabilities --parallel 2
+node tests/check-vkpeak-capabilities.mjs build/tests/vkpeak-capabilities.mjs
 emcmake cmake -S . -B build-cpu-reference -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON -DNCNN_WEBGPU_EXTRA_DEMOS=ON \
   -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
@@ -92,14 +99,45 @@ existing browser and displays the report in-page, without launching Chromium or
 changing its settings. The local test runner uses `--no-sandbox` only
 for an isolated, loopback-only headless test process, not a user browser.
 
-## Recovered wrapper contract
+## Thin SqueezeNet bridge
 
-`src/squeezenet.cpp` reconstructs the missing source for the worker's existing
-`gpu_count`, `gpu_name`, `init`, `infer` and `destroy` exports. The old CPU WASM
+`src/squeezenet.cpp` is the browser ABI bridge for
+[ncnn's SqueezeNet example](https://github.com/Tencent/ncnn/blob/cb65ca26ba955bf456f3a26e13e9a644769fc4a4/examples/squeezenet.cpp).
+It calls ncnn's preprocessing, Net and Extractor APIs. The necessary adaptation
+is persistent model state, RGBA input and the worker's existing `gpu_count`,
+`gpu_name`, `init`, `infer`, `destroy` and 17-float result contract instead of an
+OpenCV image-path CLI. The old CPU WASM
 confirms direct bilinear resize to 227 x 227 (no crop), RGBA-to-BGR conversion,
 means `(104,117,123)`, ten timed inferences and 1000 classes. The worker exposes
 only top-3 `(class, score)` pairs plus ten times and their minimum. The generated
 module retains malloc/free, ccall, HEAPU8/HEAPF32 and the two FS creation helpers.
+
+## Upstream source adapters
+
+The two benchmark translation units directly include ncnn's pinned
+`benchmark/benchncnn.cpp` and `benchmark/benchncnn_llm.cpp`; vkpeak directly
+includes the pinned project's `vkpeak.cpp`. Model catalogues, options, kernels,
+calibration and scoring stay upstream rather than being copied into this repo.
+The build copies only those named files into its own `upstream/` directory,
+applies `patches/*.patch` with zero context fuzz, and leaves the original
+checkouts unchanged. An input-content signature avoids regenerating unchanged
+adapted files. Patch failure is a build error, not a fallback to local engines.
+
+The ncnn patch adds worker single-model filtering, removes the Node-only mount,
+propagates failures to the worker's exit contract and coordinates allocator
+cleanup. It preserves the upstream model table, input shapes, options and
+warmups. The vkpeak patch guards the CLI for library inclusion and bounds
+browser buffers to 16 MiB plus dispatch/calibration limits; it preserves the
+upstream kernels and throughput calculations. These upstream workloads are
+not intended to reproduce the old generated vkpeak asset's timing values.
+The `int8-dotprod` item stays in the 12-scenario list but is explicitly
+unsupported: its upstream single/dual kernels require saturating packed dot
+(`OpSDotAccSat`), which the current nikki SDK rejects. A device dot-product
+feature flag alone does not establish support. The original kernels are not
+silently changed to non-saturating arithmetic; `int8-matrix` keeps its separate
+cooperative-matrix capability check. A separate no-GPU diagnostic invokes the
+actual shim with device-lookup stubs and advertised dot/matrix features: dot is
+rejected before any device/kernel call, while matrix remains eligible.
 
 ## Benchmark and vkpeak contracts
 
@@ -118,7 +156,7 @@ iteration with actual compute dispatch, and checks vkpeak's 12 scenario names
 and units. It does not run LLM model inference or the full vkpeak performance
 suite. Neither ABI checks nor device enumeration establish numerical accuracy
 or peak hardware performance. The vkpeak Node contract checks metadata, invalid
-arguments and embedded shader fidelity, not execution. The preserved `copy-h2d`
+arguments and an upstream shader provenance marker, not execution. The preserved `copy-h2d`
 and `copy-d2h` scenarios time mapped staging memcpy plus flush/invalidate, not
 submitted GPU transfers; do not present them as physical device bandwidth.
 The unchanged SqueezeNet parity test remains the
