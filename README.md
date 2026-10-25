@@ -1,7 +1,7 @@
 # ncnn WebGPU demo
 
 The checked-in UI, models and CPU assets remain the demo baseline.
-The reproducible build produces wasm32 and wasm64 application pairs for
+The build produces wasm32 and wasm64 application pairs for
 SqueezeNet, benchncnn, benchncnn_llm and vkpeak. It does not build nikki from source or update
 the committed assets. CI stages the tested site for GitHub Pages separately.
 
@@ -19,16 +19,21 @@ pinned Emdawnwebgpu port and Asyncify/Closure link settings through
 `nikki::static`. Use a dual-architecture SDK release that includes the Emdawn
 runtime and architecture metadata.
 
-There is not yet a released SDK to pin as a default. Once the producer's release
-is explicitly approved and published, select its fixed **YYYYMMDD tag and full
-source commit**. Do not use a floating "latest" download. The download checks
-the package version, source and toolchain without a cross-repository token.
-A missing or unpublished release fails clearly, never falling back to source.
+Each build resolves the latest formal nikki release once through GitHub's public
+API. The selected YYYYMMDD tag is resolved to its actual commit, including
+annotated tags; `target_commitish` is not trusted as a source revision. Both
+architectures use that same resolution even if a newer release appears mid-build.
+The downloader verifies each archive's GitHub SHA256 digest before extraction,
+then checks package version, source commit, toolchain and architecture. Missing
+releases, incomplete architecture pairs or absent digests fail closed, with no
+source-build fallback. No cross-repository token or manually edited pin is needed.
 
 ```sh
 source /path/to/emsdk/emsdk_env.sh
-export NIKKI_VERSION=<published-YYYYMMDD-tag>
-export NIKKI_REVISION=<full-producer-commit>
+python3 tools/resolve-sdk-release.py > sdk-release.env || exit 1
+set -a
+source sdk-release.env
+set +a
 for arch in wasm32 wasm64; do
     WASM_ARCH="$arch" tools/download-nikki.sh ".deps/nikki-$arch"
     WASM_ARCH="$arch" NIKKI_PREFIX="$PWD/.deps/nikki-$arch" \
@@ -77,16 +82,17 @@ manual runs on other branches cannot deploy. The build token has only
 job receives `pages: write` and `id-token: write`. Deployments use the
 `github-pages` environment and a non-cancelling deployment concurrency group.
 
-Two prerequisites remain before the first real build/deployment:
+CI resolves the latest formal release once after the SDK-free tests. It records
+the release ID, tag, actual commit and both asset digests in
+`test-results-sdk-resolution.json`, with the frozen build environment in
+`sdk-release.env`. These are uploaded separately even if resolution or a later
+step fails, so the exact SDK input can be inspected or reused for a reproduction.
+A missing/incomplete release blocks the build and deployment rather than using
+old assets.
 
-1. Publish the producer SDK separately, then commit its real release date and
-   source SHA in `config/nikki-sdk.env`. Both values are intentionally empty
-   until a release exists. CI fails at this gate rather than skipping the build
-   or publishing old assets. Manual runs use the same reviewed pin, with no
-   version override.
-2. Confirm the repository's **Settings → Pages → Source** is **GitHub Actions**.
-   This change has not inspected or changed the current Pages setting. The
-   workflow does not enable Pages or modify its settings automatically.
+Before the first deployment, confirm **Settings → Pages → Source** is
+**GitHub Actions**. This change has not inspected or changed the current Pages
+setting; the workflow does not enable Pages or modify its settings automatically.
 
 After all ABI, CPU and browser checks pass, `tools/stage-site.py` creates a fresh
 `_site` containing only the existing HTML/JS/CSS/workers, the three SqueezeNet
@@ -104,7 +110,7 @@ reports and SDK/source provenance are uploaded as a separate non-site artifact.
 Generated files are never committed or pushed to a `gh-pages` branch. A failed
 test, missing SDK or incomplete site prevents deployment.
 
-SDK-free staging/pin fixtures and local staging can be run with:
+SDK-free staging/release-resolution fixtures and local staging can be run with:
 
 ```sh
 python3 -m unittest discover -s tests -p test_pages.py -v
@@ -118,7 +124,7 @@ python3 tools/stage-site.py --module-dir build-wasm32/assets \
 The SDK-free Chromium test uses real browser workers and the real Memory64
 probe, but mock module factories. It covers all four module paths, a simulated
 unsupported-memory64 browser, absent WebGPU, and initialization errors without
-claiming application/GPU execution. CI runs it before the release-pin gate.
+claiming application/GPU execution. CI runs it before SDK release resolution.
 
 ## Acceptance tests
 

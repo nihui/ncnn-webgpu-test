@@ -1,9 +1,15 @@
 # Copyright 2026 Tencent
 # SPDX-License-Identifier: BSD-3-Clause
-"""SDK-free fixtures for the Pages allowlist and fail-closed release pin."""
+"""SDK-free fixtures for the Pages allowlist and fail-closed release resolution."""
 from html.parser import HTMLParser
 from pathlib import Path
 import os
+import copy
+import hashlib
+import io
+import contextlib
+import sys
+from unittest.mock import patch
 import shutil
 import subprocess
 import tempfile
@@ -148,7 +154,7 @@ class SdkArchitectureTests(unittest.TestCase):
         curl.write_text('#!/usr/bin/env bash\nwhile [[ "$1" != --output ]]; do shift; done\ncp "$FIXTURE_ARCHIVE" "$2"\n')
         curl.chmod(0o755)
 
-    def download(self, requested, packaged):
+    def download(self, requested, packaged, bad_digest=False):
         package = self.root / f"nikki-20000101-{requested}-emscripten"
         package.mkdir(exist_ok=True)
         for name, value in {"release-version": "20000101", "source-revision": "a" * 40,
@@ -164,7 +170,8 @@ class SdkArchitectureTests(unittest.TestCase):
                                 text=True, capture_output=True, env={**os.environ,
                                 "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
                                 "FIXTURE_ARCHIVE": str(archive), "WASM_ARCH": requested,
-                                "NIKKI_VERSION": "20000101", "NIKKI_REVISION": "a" * 40})
+                                "NIKKI_VERSION": "20000101", "NIKKI_REVISION": "a" * 40,
+                                f"NIKKI_{requested.upper()}_SHA256": "0" * 64 if bad_digest else hashlib.sha256(archive.read_bytes()).hexdigest()})
         return result, destination
 
     def test_build_selects_matching_flags_and_rejects_wrong_sdk(self):
@@ -218,6 +225,12 @@ class SdkArchitectureTests(unittest.TestCase):
                 self.assertIn("Package architecture mismatch", result.stderr)
                 self.assertFalse(destination.exists())
 
+    def test_archive_digest_mismatch_rejected_before_extraction(self):
+        result, destination = self.download("wasm64", "wasm64", bad_digest=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SDK archive SHA256 mismatch", result.stderr)
+        self.assertFalse(destination.exists())
+
     def test_invalid_architecture_rejected_before_download(self):
         result, destination = self.download("native", "native")
         self.assertNotEqual(result.returncode, 0)
@@ -225,41 +238,98 @@ class SdkArchitectureTests(unittest.TestCase):
         self.assertFalse(destination.exists())
 
 
-class SdkPinTests(unittest.TestCase):
+resolver = types.ModuleType("resolver")
+resolver.__file__ = str(ROOT / "tools/resolve-sdk-release.py")
+exec(compile(Path(resolver.__file__).read_text(), resolver.__file__, "exec"), resolver.__dict__)
+
+
+class SdkReleaseTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        (self.root / "tools").mkdir()
-        (self.root / "config").mkdir()
-        self.script = self.root / "tools/read-sdk-pin.sh"
-        shutil.copyfile(ROOT / "tools/read-sdk-pin.sh", self.script)
+        self.release = {"id": 123, "tag_name": "20000101", "draft": False, "prerelease": False,
+                        "published_at": "2000-01-01T00:00:00Z", "target_commitish": "wrong-branch", "assets": []}
+        for arch in ("wasm32", "wasm64"):
+            name = f"nikki-20000101-{arch}-emscripten.tar.gz"
+            self.release["assets"].append({"name": name, "digest": "sha256:" + "b" * 64,
+                "state": "uploaded", "size": 123,
+                "browser_download_url": f"https://github.com/nihui/nikki/releases/download/20000101/{name}"})
+        self.ref = {"ref": "refs/tags/20000101", "object": {"type": "commit", "sha": "a" * 40}}
+        self.calls = []
 
-    def read_pin(self, version, revision):
-        (self.root / "config/nikki-sdk.env").write_text(f"NIKKI_VERSION='{version}'\nNIKKI_REVISION='{revision}'\n")
-        return subprocess.run(["bash", str(self.script)], text=True, capture_output=True,
-                              env={**os.environ, "NIKKI_VERSION": "19990101", "NIKKI_REVISION": "b" * 40})
+    def fetch(self, path):
+        self.calls.append(path)
+        if path == "/releases/latest":
+            return copy.deepcopy(self.release)
+        if path == "/git/ref/tags/20000101":
+            return copy.deepcopy(self.ref)
+        if path == "/git/tags/" + "c" * 40:
+            return {"object": {"type": "commit", "sha": "a" * 40}}
+        raise RuntimeError("Unexpected API call: " + path)
 
-    def test_unconfigured_and_invalid_pins_block(self):
-        for version, revision in (("", ""), ("latest", "a" * 40), ("20000101", "abc")):
-            result = self.read_pin(version, revision)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, "")
-            self.assertIn("build and deployment are blocked", result.stderr)
+    def test_latest_resolved_once_for_both_architectures(self):
+        result = resolver.resolve_release(self.fetch)
+        self.assertEqual(result["revision"], "a" * 40)
+        self.assertEqual(result["version"], "20000101")
+        self.assertEqual(set(result["assets"]), {"wasm32", "wasm64"})
+        self.assertEqual(self.calls, ["/releases/latest", "/git/ref/tags/20000101"])
 
-    def test_repo_pin_not_environment_override(self):
-        # Synthetic fixture only: no download or claim that this release exists.
-        result = self.read_pin("20000101", "a" * 40)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "NIKKI_VERSION=20000101\nNIKKI_REVISION=" + "a" * 40 + "\n")
+    def test_annotated_tag_resolves_actual_commit(self):
+        self.ref["object"] = {"type": "tag", "sha": "c" * 40}
+        result = resolver.resolve_release(self.fetch)
+        self.assertEqual(result["revision"], "a" * 40)
+        self.assertEqual(self.calls.count("/releases/latest"), 1)
 
-    def test_missing_key_cannot_inherit_environment_pin(self):
-        (self.root / "config/nikki-sdk.env").write_text("NIKKI_VERSION=20000101\n")
-        result = subprocess.run(["bash", str(self.script)], text=True, capture_output=True,
-                                env={**os.environ, "NIKKI_REVISION": "b" * 40})
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "")
-        self.assertIn("build and deployment are blocked", result.stderr)
+    def test_no_release_or_api_failure_has_no_fallback(self):
+        def fail(path):
+            self.calls.append(path)
+            raise RuntimeError("HTTP 404: no release")
+        with self.assertRaisesRegex(RuntimeError, "no release"):
+            resolver.resolve_release(fail)
+        self.assertEqual(self.calls, ["/releases/latest"])
+
+    def test_draft_prerelease_unpublished_and_bad_tag_rejected(self):
+        for key, value in (("draft", True), ("prerelease", True), ("published_at", None), ("tag_name", "main")):
+            with self.subTest(key=key):
+                original = self.release[key]
+                self.release[key] = value
+                with self.assertRaises(ValueError):
+                    resolver.resolve_release(self.fetch)
+                self.release[key] = original
+
+    def test_missing_duplicate_or_invalid_assets_rejected(self):
+        good = copy.deepcopy(self.release["assets"])
+        for assets in (good[:1], good[1:], good + [good[0]]):
+            self.release["assets"] = assets
+            with self.assertRaisesRegex(ValueError, "Missing or duplicate"):
+                resolver.resolve_release(self.fetch)
+        for key, value in (("digest", None), ("digest", "sha256:no"), ("state", "new"), ("size", 0),
+                           ("browser_download_url", "https://example.invalid/sdk.tar.gz")):
+            with self.subTest(key=key, value=value):
+                self.release["assets"] = copy.deepcopy(good)
+                self.release["assets"][0][key] = value
+                with self.assertRaises(ValueError):
+                    resolver.resolve_release(self.fetch)
+
+    def test_failed_resolution_overwrites_provenance_and_emits_no_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "resolution.json"
+            output.write_text('{"status": "pass", "version": "stale"}')
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with patch.object(sys, "argv", ["resolve-sdk-release.py", "--output", str(output)]), \
+                 patch.object(resolver, "resolve_release", side_effect=RuntimeError("HTTP 403: rate limited")), \
+                 contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                self.assertEqual(resolver.main(), 1)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(resolver.json.loads(output.read_text()), {"status": "fail", "error": "HTTP 403: rate limited"})
+            self.assertIn("rate limited", stderr.getvalue())
+
+    def test_tag_mismatch_and_noncommit_rejected(self):
+        for ref in ({"ref": "refs/tags/wrong", "object": {"type": "commit", "sha": "a" * 40}},
+                    {"ref": "refs/tags/20000101", "object": {"type": "tree", "sha": "a" * 40}},
+                    {"ref": "refs/tags/20000101", "object": {"type": "commit", "sha": "main"}}):
+            self.ref = ref
+            with self.assertRaises(ValueError):
+                resolver.resolve_release(self.fetch)
 
 
 if __name__ == "__main__":

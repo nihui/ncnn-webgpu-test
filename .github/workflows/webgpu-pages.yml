@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Test site staging and SDK pin handling
+      - name: Test site staging and SDK release resolution
         run: python3 -m unittest discover -s tests -p test_pages.py -v
       - uses: actions/setup-node@v4
         with:
@@ -33,8 +33,20 @@ jobs:
           npm ci --prefix tests/browser --ignore-scripts
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           node tests/browser/check-selection.mjs --chrome "$CHROME" --output test-results-selection.json
-      - name: Read the reviewed SDK release pin
-        run: tools/read-sdk-pin.sh >> "$GITHUB_ENV"
+      - name: Resolve the latest formal SDK release once
+        run: |
+          python3 tools/resolve-sdk-release.py > sdk-release.env
+          cat sdk-release.env
+          cat sdk-release.env >> "$GITHUB_ENV"
+      - name: Record SDK release resolution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nikki-sdk-resolution
+          path: |
+            test-results-sdk-resolution.json
+            sdk-release.env
+          if-no-files-found: ignore
       - uses: emscripten-core/setup-emsdk@v16
         with:
           version: '6.0.12'
@@ -42,7 +54,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build patch
-      - name: Download both fixed public SDK packages
+      - name: Download both resolved SDK packages
         run: |
           for arch in wasm32 wasm64; do
             WASM_ARCH="$arch" tools/download-nikki.sh ".deps/nikki-$arch"
