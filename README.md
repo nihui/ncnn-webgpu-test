@@ -2,8 +2,8 @@
 
 The checked-in UI, workers, models and CPU assets remain the demo baseline.
 The reproducible build produces the SqueezeNet, benchncnn, benchncnn_llm and
-vkpeak WebGPU application pairs. It does not build nikki from source, update the
-committed assets or deploy GitHub Pages.
+vkpeak WebGPU application pairs. It does not build nikki from source or update
+the committed assets. CI stages the tested site for GitHub Pages separately.
 
 ## Rebuild the demos from a prebuilt nikki SDK
 
@@ -20,12 +20,9 @@ pinned Emdawnwebgpu port and Asyncify/Closure link settings through
 
 There is not yet a released SDK to pin as a default. Once the producer's release
 is explicitly approved and published, select its fixed **YYYYMMDD tag and full
-source commit**. Do not use a floating "latest" download. The
-`WebGPU demos prebuilt nikki consumer` manual workflow takes those required values,
-downloads the public date-named SDK asset, checks the package version/source/
-toolchain, links the demo, runs tests and uploads the application pair. It needs
-no cross-repository token and does not publish a release or deploy Pages. A
-missing or unpublished release fails clearly, never falling back to source.
+source commit**. Do not use a floating "latest" download. The download checks
+the package version, source and toolchain without a cross-repository token.
+A missing or unpublished release fails clearly, never falling back to source.
 
 ```sh
 source /path/to/emsdk/emsdk_env.sh
@@ -49,6 +46,49 @@ and matching `.wasm` files. Always keep each pair together.
 A missing/incomplete SDK is an error, never a request to silently rebuild nikki.
 Use a fresh build directory and an SDK rebuilt with emsdk 6.0.12 when upgrading
 from an older toolchain; do not reuse old object files or static archives.
+
+## CI and GitHub Pages
+
+`.github/workflows/webgpu-pages.yml` builds and tests pull requests, pushes to
+`master`, and manual runs. Only a successful `master` push or manual run in
+`nihui/ncnn-webgpu-test` can enter the separate Pages deployment job. PRs and
+manual runs on other branches cannot deploy. The build token has only
+`contents: read`, and checkout does not persist credentials; only the deployment
+job receives `pages: write` and `id-token: write`. Deployments use the
+`github-pages` environment and a non-cancelling deployment concurrency group.
+
+Two prerequisites remain before the first real build/deployment:
+
+1. Publish the producer SDK separately, then commit its real release date and
+   source SHA in `config/nikki-sdk.env`. Both values are intentionally empty
+   until a release exists. CI fails at this gate rather than skipping the build
+   or publishing old assets. Manual runs use the same reviewed pin, with no
+   version override.
+2. Confirm the repository's **Settings → Pages → Source** is **GitHub Actions**.
+   This change has not inspected or changed the current Pages setting. The
+   workflow does not enable Pages or modify its settings automatically.
+
+After all ABI, CPU and browser checks pass, `tools/stage-site.py` creates a fresh
+`_site` containing only the existing HTML/JS/CSS/workers, the three SqueezeNet
+model files, all scalar/SIMD CPU pairs, and all four newly built WebGPU pairs.
+It rejects missing or empty runtime files, linked files, existing output and the
+committed GPU directory as input. It does not copy `.git`, `.deps`, source,
+tests, SDK files or build reports. Relative URLs and filenames are unchanged,
+so the site also works under the `/ncnn-webgpu-test/` project prefix; no custom
+COOP/COEP headers are needed by this threads-disabled build.
+
+`actions/upload-pages-artifact` uploads this single site artifact and
+`actions/deploy-pages` publishes it only after the build job succeeds. Test
+reports and SDK/source provenance are uploaded as a separate non-site artifact.
+Generated files are never committed or pushed to a `gh-pages` branch. A failed
+test, missing SDK or incomplete site prevents deployment.
+
+SDK-free staging/pin fixtures and local staging can be run with:
+
+```sh
+python3 -m unittest discover -s tests -p test_pages.py -v
+python3 tools/stage-site.py --module-dir build/assets --output _site
+```
 
 ## Acceptance tests
 

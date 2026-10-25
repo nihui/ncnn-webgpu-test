@@ -1,29 +1,28 @@
 # Copyright 2026 Tencent
 # SPDX-License-Identifier: BSD-3-Clause
-name: WebGPU demos prebuilt nikki consumer
+name: Build WebGPU demos and deploy Pages
 on:
+  pull_request:
+  push:
+    branches: [master]
   workflow_dispatch:
-    inputs:
-      nikki_version:
-        description: 'Published nikki YYYYMMDD SDK release tag'
-        required: true
-        type: string
-      nikki_revision:
-        description: 'Exact 40-character nikki source commit from that release'
-        required: true
-        type: string
-permissions:
-  contents: read
+permissions: {}
 jobs:
-  squeezenet:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    permissions:
+      contents: read
     env:
       BINARYEN_CORES: '1'
-      NIKKI_VERSION: ${{ inputs.nikki_version }}
-      NIKKI_REVISION: ${{ inputs.nikki_revision }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test site staging and SDK pin handling
+        run: python3 -m unittest discover -s tests -p test_pages.py -v
+      - name: Read the reviewed SDK release pin
+        run: tools/read-sdk-pin.sh >> "$GITHUB_ENV"
       - uses: emscripten-core/setup-emsdk@v16
         with:
           version: '6.0.12'
@@ -70,21 +69,25 @@ jobs:
         run: |
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           node tests/browser/run.mjs --chrome "$CHROME" --module-dir build/assets --extra-demos --output test-results-browser.json
-      - name: Package the pairs and record the selected producer
+      - name: Stage the complete site
         run: |
-          mkdir -p artifact/assets
-          cp build/assets/*-webgpu.mjs build/assets/*-webgpu.wasm artifact/assets/
-          printf '%s\n' "$NIKKI_REVISION" > artifact/nikki-source-revision.txt
-          printf '%s\n' "$NIKKI_VERSION" > artifact/nikki-release-version.txt
-          cp .deps/nikki/emsdk-version.txt artifact/emsdk-version.txt
-          git -C .deps/ncnn rev-parse HEAD > artifact/ncnn-source-revision.txt
-          git -C .deps/vkpeak rev-parse HEAD > artifact/vkpeak-source-revision.txt
-          cp test-results-*.json artifact/
-          git diff --exit-code -- assets models backend-worker.mjs benchncnn-worker.mjs benchncnn-llm-worker.mjs vkpeak-worker.mjs app.js index.html
+          python3 tools/stage-site.py --module-dir build/assets --output _site
+          git diff --exit-code -- assets models *.html *.js *.css *-worker.mjs
+      - name: Upload the site artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Record build provenance and test reports
+        run: |
+          mkdir -p build-reports
+          cp .deps/nikki/{source-revision,release-version,emsdk-version}.txt build-reports/
+          git -C .deps/ncnn rev-parse HEAD > build-reports/ncnn-source-revision.txt
+          git -C .deps/vkpeak rev-parse HEAD > build-reports/vkpeak-source-revision.txt
+          cp test-results-*.json build-reports/
       - uses: actions/upload-artifact@v4
         with:
-          name: ncnn-webgpu-${{ inputs.nikki_revision }}
-          path: artifact/
+          name: webgpu-build-reports
+          path: build-reports/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: failure()
@@ -92,3 +95,24 @@ jobs:
           name: webgpu-failure-results
           path: test-results-*.json
           if-no-files-found: ignore
+
+  deploy:
+    if: >-
+      github.repository == 'nihui/ncnn-webgpu-test' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy the tested site
+        id: deployment
+        uses: actions/deploy-pages@v4
