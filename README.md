@@ -115,6 +115,7 @@ SDK-free staging/release-resolution fixtures and local staging can be run with:
 ```sh
 python3 -m unittest discover -s tests -p test_pages.py -v
 node tests/check-runtime-selection.mjs
+node tests/check-worker-diagnostics.mjs
 npm ci --prefix tests/browser --ignore-scripts
 node tests/browser/check-selection.mjs --chrome /path/to/chrome
 python3 tools/stage-site.py --module-dir build-wasm32/assets \

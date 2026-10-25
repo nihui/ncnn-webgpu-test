@@ -26,8 +26,10 @@ jobs:
           node-version: '24.18.0'
           cache: npm
           cache-dependency-path: tests/browser/package-lock.json
-      - name: Test capability selection without an SDK
-        run: node tests/check-runtime-selection.mjs
+      - name: Test capability selection and worker diagnostics without an SDK
+        run: |
+          node tests/check-runtime-selection.mjs
+          node tests/check-worker-diagnostics.mjs
       - name: Verify capability selection in Chromium without an SDK
         run: |
           npm ci --prefix tests/browser --ignore-scripts

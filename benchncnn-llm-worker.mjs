@@ -20,7 +20,16 @@ function assetUrl(path) {
 let architecture;
 
 async function createRuntime(options = {}) {
-    const module = await createDemoRuntime("benchncnn-llm", backend, assetUrl, options);
+    const module = await createDemoRuntime("benchncnn-llm", backend, assetUrl, {
+        print(text) {
+            console.log(`[benchncnn-llm:${backend}] ${text}`);
+        },
+        // ncnn prints device information to stderr; keep it visible as diagnostics.
+        printErr(text) {
+            console.warn(`[benchncnn-llm:${backend}] ${text}`);
+        },
+        ...options,
+    });
     architecture = module.wasmArchitecture;
     return module;
 }
