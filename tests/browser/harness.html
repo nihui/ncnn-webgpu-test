@@ -35,6 +35,8 @@ function validate(result) {
     validateABI(result);
     if (result.observation.validationErrors.length || result.observation.deviceLost) throw new Error("WebGPU error: " + JSON.stringify(result.observation));
     if (result.backend === "webgpu") {
+        const expected = parameters.get("expect-arch");
+        if (expected && result.architecture !== expected) throw new Error(`Expected ${expected}, got ${result.architecture}`);
         if (result.observation.dispatches <= lastDispatches) throw new Error("WebGPU did not dispatch compute for this inference");
         lastDispatches = result.observation.dispatches;
     }
@@ -60,7 +62,7 @@ window.testDone = (async () => {
             for (const result of results.slice(1)) compareTop3(baseline, result.results, `${name} ${result.backend}`);
             cases.push({ name, width, height, results });
         }
-        const extraDemos = parameters.has("extra-demos") ? await runExtraDemos() : null;
+        const extraDemos = parameters.has("extra-demos") ? await runExtraDemos(parameters.get("expect-arch")) : null;
         return { status: "pass", devices, cases, extraDemos, comparison: "top-3 IDs exact; scores abs 0.002 + rel 0.02; not all 1000 logits", input: "deterministic RGBA fixtures; real committed SqueezeNet model" };
     } catch (error) {
         return { status: "fail", error: error.stack || String(error), devices, cases };

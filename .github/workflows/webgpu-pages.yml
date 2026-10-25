@@ -21,36 +21,44 @@ jobs:
           persist-credentials: false
       - name: Test site staging and SDK pin handling
         run: python3 -m unittest discover -s tests -p test_pages.py -v
-      - name: Read the reviewed SDK release pin
-        run: tools/read-sdk-pin.sh >> "$GITHUB_ENV"
-      - uses: emscripten-core/setup-emsdk@v16
-        with:
-          version: '6.0.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '24.18.0'
           cache: npm
           cache-dependency-path: tests/browser/package-lock.json
+      - name: Test capability selection without an SDK
+        run: node tests/check-runtime-selection.mjs
+      - name: Verify capability selection in Chromium without an SDK
+        run: |
+          npm ci --prefix tests/browser --ignore-scripts
+          CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
+          node tests/browser/check-selection.mjs --chrome "$CHROME" --output test-results-selection.json
+      - name: Read the reviewed SDK release pin
+        run: tools/read-sdk-pin.sh >> "$GITHUB_ENV"
+      - uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: '6.0.12'
       - name: Install runner and build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build patch
-          npm ci --prefix tests/browser --ignore-scripts
-      - name: Download the fixed public SDK release
-        run: tools/download-nikki.sh .deps/nikki
-      - name: Link the applications against the prebuilt SDK
-        env:
-          NIKKI_PREFIX: .deps/nikki
-        run: tools/build-webgpu.sh
-      - name: Check linked module ABI without GPU execution
+      - name: Download both fixed public SDK packages
         run: |
-          node tests/check-module-abi.mjs build/assets/*-webgpu.mjs > test-results-module-abi.json
-          cat test-results-module-abi.json
-          node tests/check-vkpeak-contract.mjs build/assets/vkpeak-webgpu.mjs > test-results-vkpeak-contract.json
-          cat test-results-vkpeak-contract.json
-          cmake --build build --target vkpeak-capabilities --parallel 2
-          node tests/check-vkpeak-capabilities.mjs build/tests/vkpeak-capabilities.mjs > test-results-vkpeak-capabilities.json
-          cat test-results-vkpeak-capabilities.json
+          for arch in wasm32 wasm64; do
+            WASM_ARCH="$arch" tools/download-nikki.sh ".deps/nikki-$arch"
+          done
+      - name: Link and check both application architectures
+        run: |
+          for arch in wasm32 wasm64; do
+            WASM_ARCH="$arch" NIKKI_PREFIX=".deps/nikki-$arch" BUILD_DIR="build-$arch" tools/build-webgpu.sh
+            node tests/check-module-abi.mjs --expect-arch "$arch" "build-$arch"/assets/*-webgpu.mjs > "test-results-module-abi-$arch.json"
+            cat "test-results-module-abi-$arch.json"
+            node tests/check-vkpeak-contract.mjs "build-$arch/assets/vkpeak-webgpu.mjs" > "test-results-vkpeak-contract-$arch.json"
+            cat "test-results-vkpeak-contract-$arch.json"
+            cmake --build "build-$arch" --target vkpeak-capabilities --parallel 2
+            node tests/check-vkpeak-capabilities.mjs "build-$arch/tests/vkpeak-capabilities.mjs" > "test-results-vkpeak-capabilities-$arch.json"
+            cat "test-results-vkpeak-capabilities-$arch.json"
+          done
       - name: Build diagnostic CPU wrapper and compare against committed CPU modules
         run: |
           emcmake cmake -S . -B build-cpu-reference -G Ninja \
@@ -65,13 +73,16 @@ jobs:
           c++ -std=c++11 tests/benchmark-device-validation.cpp -o build-cpu-reference/benchmark-device-validation
           build-cpu-reference/benchmark-device-validation
       - name: Verify worker ABI and CPU versus WebGPU results
-        timeout-minutes: 40
+        timeout-minutes: 80
         run: |
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
-          node tests/browser/run.mjs --chrome "$CHROME" --module-dir build/assets --extra-demos --output test-results-browser.json
+          node tests/browser/run.mjs --chrome "$CHROME" --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+            --expect-arch wasm64 --extra-demos --output test-results-browser-wasm64.json
+          node tests/browser/run.mjs --chrome "$CHROME" --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+            --expect-arch wasm32 --disable-memory64 --extra-demos --output test-results-browser-wasm32.json
       - name: Stage the complete site
         run: |
-          python3 tools/stage-site.py --module-dir build/assets --output _site
+          python3 tools/stage-site.py --module-dir build-wasm32/assets --wasm64-module-dir build-wasm64/assets --output _site
           git diff --exit-code -- assets models *.html *.js *.css *-worker.mjs
       - name: Upload the site artifact
         uses: actions/upload-pages-artifact@v4
@@ -80,7 +91,10 @@ jobs:
       - name: Record build provenance and test reports
         run: |
           mkdir -p build-reports
-          cp .deps/nikki/{source-revision,release-version,emsdk-version}.txt build-reports/
+          for arch in wasm32 wasm64; do
+            mkdir -p "build-reports/$arch"
+            cp ".deps/nikki-$arch/"{source-revision,release-version,emsdk-version,architecture}.txt "build-reports/$arch/"
+          done
           git -C .deps/ncnn rev-parse HEAD > build-reports/ncnn-source-revision.txt
           git -C .deps/vkpeak rev-parse HEAD > build-reports/vkpeak-source-revision.txt
           cp test-results-*.json build-reports/

@@ -1,8 +1,8 @@
 # ncnn WebGPU demo
 
-The checked-in UI, workers, models and CPU assets remain the demo baseline.
-The reproducible build produces the SqueezeNet, benchncnn, benchncnn_llm and
-vkpeak WebGPU application pairs. It does not build nikki from source or update
+The checked-in UI, models and CPU assets remain the demo baseline.
+The reproducible build produces wasm32 and wasm64 application pairs for
+SqueezeNet, benchncnn, benchncnn_llm and vkpeak. It does not build nikki from source or update
 the committed assets. CI stages the tested site for GitHub Pages separately.
 
 ## Rebuild the demos from a prebuilt nikki SDK
@@ -16,7 +16,8 @@ checkouts if absent and rejects a different revision or tracked local changes.
 Only nikki is consumed as a prebuilt SDK; ncnn and vkpeak are upstream sources.
 The nikki SDK supplies its matching Tint/SPIRV-Tools archives, Vulkan headers,
 pinned Emdawnwebgpu port and Asyncify/Closure link settings through
-`nikki::static`. Its port may download the pinned Emdawn runtime on first link.
+`nikki::static`. Use a dual-architecture SDK release that includes the Emdawn
+runtime and architecture metadata.
 
 There is not yet a released SDK to pin as a default. Once the producer's release
 is explicitly approved and published, select its fixed **YYYYMMDD tag and full
@@ -28,24 +29,43 @@ A missing or unpublished release fails clearly, never falling back to source.
 source /path/to/emsdk/emsdk_env.sh
 export NIKKI_VERSION=<published-YYYYMMDD-tag>
 export NIKKI_REVISION=<full-producer-commit>
-tools/download-nikki.sh .deps/nikki
-export NIKKI_PREFIX="$PWD/.deps/nikki"
-tools/build-webgpu.sh
+for arch in wasm32 wasm64; do
+    WASM_ARCH="$arch" tools/download-nikki.sh ".deps/nikki-$arch"
+    WASM_ARCH="$arch" NIKKI_PREFIX="$PWD/.deps/nikki-$arch" \
+        BUILD_DIR="build-$arch" tools/build-webgpu.sh
+done
 ```
 
 For an already downloaded SDK, omit the download step and set `NIKKI_PREFIX`
-and `NIKKI_REVISION`. `NCNN_SOURCE_DIR`, `VKPEAK_SOURCE_DIR`, `BUILD_DIR` and
+and `NIKKI_REVISION`, with `WASM_ARCH=wasm32` or `wasm64` matching its
+`architecture.txt`. The downloader defaults to `.deps/nikki-$WASM_ARCH`. `NCNN_SOURCE_DIR`, `VKPEAK_SOURCE_DIR`, `BUILD_DIR` and
 `JOBS` may be overridden;
 existing ncnn checkouts must be clean at the pinned commit. Final-link optimizer
 concurrency defaults to `BINARYEN_CORES=1` to bound memory use; this does not lower
 optimization or disable Asyncify. The script serializes the four final links.
-Outputs are `build/assets/{squeezenet,benchncnn,benchncnn-llm,vkpeak}-webgpu.mjs`
-and matching `.wasm` files. Always keep each pair together.
+Outputs are `${BUILD_DIR}/assets/{squeezenet,benchncnn,benchncnn-llm,vkpeak}-webgpu.mjs`
+and matching `.wasm` files. Default build directories are `build` for wasm32 and
+`build-wasm64` for wasm64; the loop above sets both explicitly. Always keep each
+pair together and never mix architectures.
 `tools/build-squeezenet.sh` retains the minimal SqueezeNet-only entry point;
 `tools/build-webgpu.sh benchncnn-webgpu` builds just the named target.
 A missing/incomplete SDK is an error, never a request to silently rebuild nikki.
 Use a fresh build directory and an SDK rebuilt with emsdk 6.0.12 when upgrading
 from an older toolchain; do not reuse old object files or static archives.
+
+## Automatic browser selection
+
+WebGPU workers validate a small Memory64 module in the current browser. When
+supported they load `assets/wasm64/*-webgpu.mjs` and its matching Wasm; otherwise
+they keep the wasm32 `assets/*-webgpu.mjs` path. The choice is shared by all four
+demos and does not use browser-name/version guesses. Scalar and SIMD CPU backends
+remain the existing wasm32 modules. WebGPU must still be available; Memory64
+does not add WebGPU support or change GPU buffer limits.
+
+Pointer parameters use Emscripten's `ccall` pointer type for either ABI, while
+heap offsets stay Numbers without 32-bit shifts. Wasm64 permits an 8 GiB maximum
+linear memory (not an upfront allocation). A failed download, module initialization
+or GPU operation is reported, not silently retried as wasm32 and hidden.
 
 ## CI and GitHub Pages
 
@@ -70,10 +90,11 @@ Two prerequisites remain before the first real build/deployment:
 
 After all ABI, CPU and browser checks pass, `tools/stage-site.py` creates a fresh
 `_site` containing only the existing HTML/JS/CSS/workers, the three SqueezeNet
-model files, all scalar/SIMD CPU pairs, and all four newly built WebGPU pairs.
+model files, all scalar/SIMD CPU pairs, and all four newly built WebGPU pairs for each architecture.
 It rejects missing or empty runtime files, linked files, existing output and the
 committed GPU directory as input. It does not copy `.git`, `.deps`, source,
-tests, SDK files or build reports. Relative URLs and filenames are unchanged,
+tests, SDK files or build reports. Wasm32 filenames are unchanged; wasm64 pairs
+live under `assets/wasm64/`. Relative URLs are preserved,
 so the site also works under the `/ncnn-webgpu-test/` project prefix; no custom
 COOP/COEP headers are needed by this threads-disabled build.
 
@@ -87,25 +108,47 @@ SDK-free staging/pin fixtures and local staging can be run with:
 
 ```sh
 python3 -m unittest discover -s tests -p test_pages.py -v
-python3 tools/stage-site.py --module-dir build/assets --output _site
+node tests/check-runtime-selection.mjs
+npm ci --prefix tests/browser --ignore-scripts
+node tests/browser/check-selection.mjs --chrome /path/to/chrome
+python3 tools/stage-site.py --module-dir build-wasm32/assets \
+  --wasm64-module-dir build-wasm64/assets --output _site
 ```
+
+The SDK-free Chromium test uses real browser workers and the real Memory64
+probe, but mock module factories. It covers all four module paths, a simulated
+unsupported-memory64 browser, absent WebGPU, and initialization errors without
+claiming application/GPU execution. CI runs it before the release-pin gate.
 
 ## Acceptance tests
 
 ```sh
 npm ci --prefix tests/browser --ignore-scripts
-node tests/check-module-abi.mjs build/assets/*-webgpu.mjs
-node tests/check-vkpeak-contract.mjs build/assets/vkpeak-webgpu.mjs
-cmake --build build --target vkpeak-capabilities --parallel 2
-node tests/check-vkpeak-capabilities.mjs build/tests/vkpeak-capabilities.mjs
+for arch in wasm32 wasm64; do
+    node tests/check-module-abi.mjs --expect-arch "$arch" "build-$arch"/assets/*-webgpu.mjs
+    node tests/check-vkpeak-contract.mjs "build-$arch/assets/vkpeak-webgpu.mjs"
+    cmake --build "build-$arch" --target vkpeak-capabilities --parallel 2
+    node tests/check-vkpeak-capabilities.mjs "build-$arch/tests/vkpeak-capabilities.mjs"
+done
 emcmake cmake -S . -B build-cpu-reference -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON -DNCNN_WEBGPU_EXTRA_DEMOS=ON \
   -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
 cmake --build build-cpu-reference --parallel 2
 node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
 node tests/check-benchmark-contract.mjs build-cpu-reference/assets
-node tests/browser/run.mjs --chrome /path/to/chrome --module-dir build/assets --extra-demos
+node tests/browser/run.mjs --chrome /path/to/chrome \
+  --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+  --expect-arch wasm64 --extra-demos
+node tests/browser/run.mjs --chrome /path/to/chrome \
+  --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+  --expect-arch wasm32 --disable-memory64 --extra-demos
 ```
+
+Run the ABI/contract checks for both build directories. The `--disable-memory64`
+browser test simulates a failed capability probe in test-only worker instrumentation;
+it executes the real wasm32 modules, without adding a production override. The
+wasm64 pass uses the browser's real capability probe. Both assert the selected
+architecture in worker responses.
 
 The ABI smoke check instantiates the linked pair and validates its exported
 functions, heap views and allocation helpers without requesting a GPU or running
@@ -185,7 +228,8 @@ rejected before any device/kernel call, while matrix remains eligible.
 `onExit`/`onAbort`, `noInitialRun` device enumeration and `model=NAME` selection.
 Both use the pinned ncnn benchmark parameter graphs and synthetic zero weights,
 not downloaded model weights. Unknown models must fail rather than run the
-entire suite. Their maximum memory is 4 GiB, matching the committed modules.
+entire suite. Their wasm32 maximum memory remains 4 GiB, matching the committed modules;
+wasm64 permits 8 GiB.
 CPU diagnostic modules use distinct `*-reference` names and never replace the
 committed CPU assets.
 

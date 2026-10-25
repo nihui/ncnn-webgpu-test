@@ -1,5 +1,5 @@
 // Bounded production-worker checks. This is not a complete benchmark suite.
-export async function runExtraDemos() {
+export async function runExtraDemos(expectedArchitecture) {
     const results = [];
     let id = 0;
     for (const kind of ["benchncnn", "benchncnn-llm", "vkpeak"]) {
@@ -22,6 +22,7 @@ export async function runExtraDemos() {
             worker.postMessage({ ...message, id: requestId });
         });
         const validateObservation = (data) => {
+            if (expectedArchitecture && data.architecture !== expectedArchitecture) throw new Error(`${kind}: expected ${expectedArchitecture}, got ${data.architecture}`);
             if (!data.observation?.adapter || data.observation.validationErrors.length || data.observation.deviceLost) throw new Error(`${kind}: missing adapter or WebGPU error`);
         };
         try {

@@ -1,3 +1,4 @@
+import { allocate, release } from "../webgpu-runtime.mjs";
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -30,7 +31,7 @@ async function inspect(url) {
     }
     assert.ok(module.HEAPU8 instanceof Uint8Array);
     assert.equal(module._ncnn_vkpeak_scenario_count(), names.length);
-    const pointer = module._malloc(258);
+    const pointer = allocate(module, 258);
     assert.ok(pointer);
     const results = [];
     try {
@@ -39,7 +40,7 @@ async function inspect(url) {
         for (let index = 0; index < names.length; index++) {
             const row = [];
             for (const field of ["name", "unit"]) {
-                const read = module[`_ncnn_vkpeak_scenario_${field}`];
+                const read = (index, pointer, capacity) => module.ccall(`ncnn_vkpeak_scenario_${field}`, "number", ["number", "pointer", "number"], [index, pointer, capacity]);
                 const expected = field === "name" ? names[index] : index < 5 ? "GFLOPS" : index < 9 ? "GIOPS" : "GBPS";
                 for (const capacity of [1, 4, 256]) {
                     module.HEAPU8.fill(0xa5, pointer, pointer + 258);
@@ -59,14 +60,14 @@ async function inspect(url) {
             results.push(row);
         }
         for (const index of [-1, names.length, 2147483647]) {
-            assert.equal(module._ncnn_vkpeak_scenario_name(index, pointer, 256), -1);
-            assert.equal(module._ncnn_vkpeak_scenario_unit(index, pointer, 256), -1);
+            assert.equal(module.ccall("ncnn_vkpeak_scenario_name", "number", ["number", "pointer", "number"], [index, pointer, 256]), -1);
+            assert.equal(module.ccall("ncnn_vkpeak_scenario_unit", "number", ["number", "pointer", "number"], [index, pointer, 256]), -1);
             for (const name of ["scenario_supported", "run"]) {
                 assert.equal(await module.ccall(`ncnn_vkpeak_${name}`, "number", ["number", "number"], [0, index], { async: true }), -1);
             }
         }
     } finally {
-        module._free(pointer);
+        release(module, pointer);
         await module.ccall("ncnn_vkpeak_destroy", null, [], [], { async: true });
     }
     return results;

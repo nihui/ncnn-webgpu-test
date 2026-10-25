@@ -1,6 +1,8 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { createDemoRuntime, allocate, release } from "./webgpu-runtime.mjs";
+
 const parameters = new URL(self.location.href).searchParams;
 const gpuIndex = Number.parseInt(parameters.get("gpuIndex") || "0", 10);
 const assetVersion = parameters.get("v") || "";
@@ -11,12 +13,10 @@ function assetUrl(path) {
     return url;
 }
 
+let architecture;
+
 async function createRuntime() {
-    const factory = (await import(assetUrl("./assets/vkpeak-webgpu.mjs"))).default;
-    return factory({
-        locateFile(path) {
-            return assetUrl(`./assets/${path}`).href;
-        },
+    const module = await createDemoRuntime("vkpeak", "webgpu", assetUrl, {
         print(text) {
             console.log(`[vkpeak:${gpuIndex}] ${text}`);
         },
@@ -24,12 +24,14 @@ async function createRuntime() {
             console.warn(`[vkpeak:${gpuIndex}] ${text}`);
         },
     });
+    architecture = module.wasmArchitecture;
+    return module;
 }
 
 async function listEnvironment() {
     const module = await createRuntime();
     const capacity = 256;
-    const pointer = module._malloc(capacity);
+    const pointer = allocate(module, capacity);
     try {
         const count = await module.ccall("ncnn_vkpeak_gpu_count", "number", [], [], { async: true });
         if (count < 0) throw new Error("WebGPU 设备枚举失败");
@@ -49,7 +51,7 @@ async function listEnvironment() {
         }
         return { devices, scenarios };
     } finally {
-        module._free(pointer);
+        release(module, pointer);
         await module.ccall("ncnn_vkpeak_destroy", null, [], [], { async: true });
     }
 }
@@ -58,7 +60,7 @@ function readString(module, functionName, index, pointer, capacity) {
     const length = module.ccall(
         functionName,
         "number",
-        ["number", "number", "number"],
+        ["number", "pointer", "number"],
         [index, pointer, capacity],
     );
     if (length < 0) throw new Error(`${functionName}(${index}) failed`);
@@ -69,7 +71,7 @@ function readString(module, functionName, index, pointer, capacity) {
 async function runBenchmark(requestId) {
     const module = await createRuntime();
     const capacity = 64;
-    const pointer = module._malloc(capacity);
+    const pointer = allocate(module, capacity);
     const results = [];
 
     try {
@@ -110,7 +112,7 @@ async function runBenchmark(requestId) {
 
         return results;
     } finally {
-        module._free(pointer);
+        release(module, pointer);
         await module.ccall("ncnn_vkpeak_destroy", null, [], [], { async: true });
     }
 }
@@ -121,12 +123,12 @@ self.addEventListener("message", async (event) => {
     try {
         if (event.data.type === "list-devices") {
             const environment = await listEnvironment();
-            self.postMessage({ ...environment, id: event.data.id, status: "pass" });
+            self.postMessage({ architecture, ...environment, id: event.data.id, status: "pass" });
             return;
         }
 
         const results = await runBenchmark(event.data.id);
-        self.postMessage({ gpuIndex, id: event.data.id, results, status: "pass" });
+        self.postMessage({ architecture, gpuIndex, id: event.data.id, results, status: "pass" });
     } catch (error) {
         self.postMessage({
             error: error?.stack || error?.message || String(error),

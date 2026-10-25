@@ -20,15 +20,22 @@ if (cpuOnly && extraDemos) throw new Error("--extra-demos requires the newly bui
 const query = new URLSearchParams();
 if (cpuOnly) query.set("cpu-only", "");
 if (extraDemos) query.set("extra-demos", "");
-const pagePath = `/tests/browser/harness.html?${query}`;
+
 const moduleDir = option("--module-dir");
+const module64Dir = option("--module64-dir");
+const expectedArchitecture = option("--expect-arch");
+const disableMemory64 = args.includes("--disable-memory64");
+if (expectedArchitecture) query.set("expect-arch", expectedArchitecture);
 if (!cpuOnly && !moduleDir) throw new Error("--module-dir is required: do not accidentally test the old committed WebGPU asset");
+const pagePath = `/tests/browser/harness.html?${query}`;
+if (!cpuOnly && !module64Dir) throw new Error("--module64-dir is required for automatic architecture selection");
+if (expectedArchitecture && !["wasm32", "wasm64"].includes(expectedArchitecture)) throw new Error("invalid --expect-arch");
 const chrome = option("--chrome", process.env.CHROME || "/usr/bin/chromium");
 const output = option("--output", "test-results.json");
 const timeout = Number(option("--timeout", "1800000"));
 const hardware = args.includes("--hardware");
 const stems = ["squeezenet", ...(extraDemos ? ["benchncnn", "benchncnn-llm", "vkpeak"] : [])];
-if (moduleDir) for (const stem of stems) for (const ext of ["mjs", "wasm"]) await stat(resolve(moduleDir, `${stem}-webgpu.${ext}`));
+for (const directory of [moduleDir, module64Dir].filter(Boolean)) for (const stem of stems) for (const ext of ["mjs", "wasm"]) await stat(resolve(directory, `${stem}-webgpu.${ext}`));
 const mime = { ".html": "text/html", ".mjs": "text/javascript", ".js": "text/javascript", ".wasm": "application/wasm" };
 const server = createServer(async (request, response) => {
     try {
@@ -37,8 +44,12 @@ const server = createServer(async (request, response) => {
         let path = resolve(root, `.${pathname}`);
         if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
         if (moduleDir && /^\/assets\/(squeezenet|benchncnn|benchncnn-llm|vkpeak)-webgpu\.(mjs|wasm)$/.test(pathname)) path = resolve(moduleDir, pathname.split("/").at(-1));
+        if (module64Dir && /^\/assets\/wasm64\/(squeezenet|benchncnn|benchncnn-llm|vkpeak)-webgpu\.(mjs|wasm)$/.test(pathname)) path = resolve(module64Dir, pathname.split("/").at(-1));
         let body = await readFile(path);
-        if (/^\/(backend|benchncnn|benchncnn-llm|vkpeak)-worker\.mjs$/.test(pathname)) body = Buffer.concat([await readFile(resolve(root, "tests/browser/observe-worker.mjs")), Buffer.from("\n"), body]);
+        if (/^\/(backend|benchncnn|benchncnn-llm|vkpeak)-worker\.mjs$/.test(pathname)) body = Buffer.concat([
+            // simulate an older engine for the wasm32 fallback path without a production override
+            Buffer.from(disableMemory64 ? "WebAssembly.validate = () => false;\n" : ""),
+            await readFile(resolve(root, "tests/browser/observe-worker.mjs")), Buffer.from("\n"), body]);
         response.writeHead(200, { "Content-Type": mime[extname(path)] || "application/octet-stream", "Cache-Control": "no-store" }).end(body);
     } catch { response.writeHead(404).end(); }
 });
@@ -75,6 +86,9 @@ try {
     ]);
     report.browser = browser.version();
     report.mode = hardware ? "hardware (not guaranteed by launch flags)" : "SwiftShader software WebGPU";
+    report.expectedArchitecture = expectedArchitecture;
+    report.memory64CapabilityDisabledForTest = disableMemory64;
+    report.module64Dir = module64Dir ? resolve(module64Dir) : null;
     report.moduleDir = moduleDir ? resolve(moduleDir) : null;
     report.errors = errors;
     report.logs = logs;

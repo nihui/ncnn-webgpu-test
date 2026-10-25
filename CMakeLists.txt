@@ -12,6 +12,24 @@ if(NOT emsdk_version STREQUAL "6.0.12")
     message(FATAL_ERROR "This demo requires emsdk 6.0.12; got ${emsdk_version}")
 endif()
 
+# match both language ABIs before adding ncnn or linking an SDK
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(detected_wasm_arch wasm64)
+else()
+    set(detected_wasm_arch wasm32)
+endif()
+set(NCNN_WEBGPU_WASM_ARCH "${detected_wasm_arch}" CACHE STRING "WebAssembly architecture")
+if(NOT NCNN_WEBGPU_WASM_ARCH STREQUAL detected_wasm_arch)
+    message(FATAL_ERROR "Requested ${NCNN_WEBGPU_WASM_ARCH}, but compiler uses ${detected_wasm_arch}; set both C and CXX flags")
+endif()
+include(CheckCXXSourceCompiles)
+unset(webgpu_cxx_pointer_size_matches CACHE)
+check_cxx_source_compiles("typedef char pointer_check[sizeof(void*) == ${CMAKE_SIZEOF_VOID_P} ? 1 : -1]; int main() {}"
+    webgpu_cxx_pointer_size_matches)
+if(NOT webgpu_cxx_pointer_size_matches)
+    message(FATAL_ERROR "C and CXX WebAssembly architectures must match")
+endif()
+
 option(SQUEEZENET_CPU_ORACLE "Build diagnostic CPU wrappers, never replacing committed CPU assets" OFF)
 if(NOT SQUEEZENET_CPU_ORACLE)
     # There is deliberately no add_subdirectory(nikki) or source-build fallback.
@@ -63,6 +81,9 @@ function(add_demo_module target source)
     target_link_options(${target} PRIVATE
         -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=worker
         -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=268435456)
+    if(NCNN_WEBGPU_WASM_ARCH STREQUAL "wasm64")
+        target_link_options(${target} PRIVATE -sMAXIMUM_MEMORY=8589934592)
+    endif()
     set_target_properties(${target} PROPERTIES SUFFIX ".mjs"
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/assets")
 endfunction()
@@ -90,7 +111,10 @@ if(NCNN_WEBGPU_EXTRA_DEMOS)
         add_demo_module(${target} "src/${kind}.cpp")
         target_include_directories(${target} PRIVATE "${ncnn_ADAPTED_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
         add_dependencies(${target} "${kind}-params")
-        target_link_options(${target} PRIVATE -sEXIT_RUNTIME=1 -sMAXIMUM_MEMORY=4294967296
+        if(NCNN_WEBGPU_WASM_ARCH STREQUAL "wasm32")
+            target_link_options(${target} PRIVATE -sMAXIMUM_MEMORY=4294967296)
+        endif()
+        target_link_options(${target} PRIVATE -sEXIT_RUNTIME=1
             "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_ncnn_benchmark_gpu_count','_ncnn_benchmark_gpu_name','_ncnn_benchmark_destroy_gpu_instance']"
             "-sEXPORTED_RUNTIME_METHODS=['ccall','callMain','HEAPU8']")
     endforeach()
