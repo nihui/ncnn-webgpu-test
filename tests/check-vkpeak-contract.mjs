@@ -3,9 +3,9 @@ import { allocate, release } from "../webgpu-runtime.mjs";
 // SPDX-License-Identifier: BSD-3-Clause
 
 // No adapter is requested and no benchmark runs. This compares worker-facing
-// metadata, string-buffer boundaries and invalid-scenario handling with the
-// unchanged committed module. Scores now use pinned upstream vkpeak rather than
-// the old browser engine; this is not browser/GPU performance or correctness.
+// metadata, string-buffer boundaries and invalid-scenario handling against the
+// fixed worker contract. Scores use pinned upstream vkpeak; this is not
+// browser/GPU performance or correctness.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -13,7 +13,6 @@ import { pathToFileURL } from "node:url";
 
 if (!process.argv[2]?.endsWith(".mjs")) throw new Error("Pass the newly linked vkpeak-webgpu.mjs module");
 
-const baselineUrl = new URL("../assets/vkpeak-webgpu.mjs", import.meta.url);
 const candidateUrl = pathToFileURL(resolve(process.argv[2]));
 const names = ["fp32-scalar", "fp32-vec4", "fp16-scalar", "fp16-vec4", "fp16-matrix",
     "int32-scalar", "int32-vec4", "int8-dotprod", "int8-matrix", "copy-h2d", "copy-d2h", "copy-d2d"];
@@ -73,7 +72,8 @@ async function inspect(url) {
     return results;
 }
 
-assert.deepEqual(await inspect(candidateUrl), await inspect(baselineUrl));
+assert.deepEqual(await inspect(candidateUrl), names.map((name, index) =>
+    [name, index < 5 ? "GFLOPS" : index < 9 ? "GIOPS" : "GBPS"]));
 const candidateWasm = await readFile(new URL(candidateUrl.href.replace(/\.mjs$/, ".wasm")));
 // This single-chain fp32 kernel comes from upstream, not the previous browser
 // engine. Do not depend on unsupported int8 kernels surviving dead-code removal.
