@@ -1,6 +1,8 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { createDemoRuntime, allocate, release } from "./webgpu-runtime.mjs";
+
 const parameters = new URL(self.location.href).searchParams;
 const backend = parameters.get("backend");
 const gpuIndex = Number.parseInt(parameters.get("gpuIndex") || "0", 10);
@@ -26,13 +28,10 @@ async function fetchBytes(path) {
     return new Uint8Array(await response.arrayBuffer());
 }
 
+let architecture;
+
 async function createRuntime() {
-    const moduleUrl = assetUrl(`./assets/squeezenet-${backend}.mjs`);
-    const factory = (await import(moduleUrl)).default;
-    const module = await factory({
-        locateFile(path) {
-            return assetUrl(`./assets/${path}`).href;
-        },
+    const module = await createDemoRuntime("squeezenet", backend, assetUrl, {
         print(text) {
             console.log(`[${backend}] ${text}`);
         },
@@ -40,7 +39,7 @@ async function createRuntime() {
             console.warn(`[${backend}] ${text}`);
         },
     });
-
+    architecture = module.wasmArchitecture;
     return module;
 }
 
@@ -73,16 +72,17 @@ async function runInference(message) {
     const runtime = await runtimePromise;
     const module = runtime.module;
     const pixels = new Uint8Array(message.pixels);
-    const inputPointer = module._malloc(pixels.byteLength);
-    const resultPointer = module._malloc(17 * Float32Array.BYTES_PER_ELEMENT);
+    const inputPointer = allocate(module, pixels.byteLength);
+    let resultPointer;
     let result;
 
     try {
+        resultPointer = allocate(module, 17 * Float32Array.BYTES_PER_ELEMENT);
         module.HEAPU8.set(pixels, inputPointer);
         const returnCode = await module.ccall(
             "ncnn_squeezenet_infer",
             "number",
-            ["number", "number", "number", "number"],
+            ["pointer", "number", "number", "pointer"],
             [inputPointer, message.width, message.height, resultPointer],
             { async: true },
         );
@@ -93,6 +93,7 @@ async function runInference(message) {
         result = {
             backend,
             backendKey,
+            architecture: module.wasmArchitecture,
             gpuIndex,
             initMs: runtime.initMs,
             fastestMs: values[16],
@@ -103,8 +104,8 @@ async function runInference(message) {
             timings: values.slice(6, 16),
         };
     } finally {
-        module._free(resultPointer);
-        module._free(inputPointer);
+        if (resultPointer) release(module, resultPointer);
+        release(module, inputPointer);
     }
 
     return result;
@@ -127,7 +128,7 @@ async function listDevices() {
             throw new Error(`WebGPU device enumeration failed: ${count}`);
 
         const capacity = 512;
-        const namePointer = module._malloc(capacity);
+        const namePointer = allocate(module, capacity);
         try {
             const decoder = new TextDecoder();
             const devices = [];
@@ -135,7 +136,7 @@ async function listDevices() {
                 const length = module.ccall(
                     "ncnn_squeezenet_gpu_name",
                     "number",
-                    ["number", "number", "number"],
+                    ["number", "pointer", "number"],
                     [index, namePointer, capacity],
                 );
                 if (length < 0)
@@ -147,7 +148,7 @@ async function listDevices() {
             }
             return devices;
         } finally {
-            module._free(namePointer);
+            release(module, namePointer);
         }
     } finally {
         await module.ccall(
@@ -164,7 +165,7 @@ self.addEventListener("message", async (event) => {
     try {
         if (event.data?.type === "list-devices") {
             const devices = await listDevices();
-            self.postMessage({ devices, id: event.data.id, status: "pass" });
+            self.postMessage({ architecture, devices, id: event.data.id, status: "pass" });
             return;
         }
 

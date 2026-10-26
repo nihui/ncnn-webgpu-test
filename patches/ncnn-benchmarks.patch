@@ -1,0 +1,166 @@
+diff --git a/benchmark/benchncnn.cpp b/benchmark/benchncnn.cpp
+index 1462c5f..ea4dfc8 100644
+--- a/benchmark/benchncnn.cpp
++++ b/benchmark/benchncnn.cpp
+@@ -39,6 +39,11 @@ static int g_warmup_loop_count = 8;
+ static int g_loop_count = 4;
+ static bool g_enable_cooling_down = true;
+ 
++// The browser wrapper requests one model, using the upstream model catalogue.
++static const char* g_benchmark_model_filter = 0;
++static bool g_benchmark_model_matched = false;
++static int g_benchmark_result = 0;
++
+ static ncnn::UnlockedPoolAllocator g_blob_pool_allocator;
+ static ncnn::PoolAllocator g_workspace_pool_allocator;
+ 
+@@ -50,6 +55,10 @@ static ncnn::VkAllocator* g_staging_vkallocator = 0;
+ 
+ void benchmark(const char* comment, const std::vector<ncnn::Mat>& _in, const ncnn::Option& opt, const char* model_param_data = NULL)
+ {
++    if (g_benchmark_model_filter && strcmp(g_benchmark_model_filter, comment) != 0)
++        return;
++    g_benchmark_model_matched = true;
++
+     g_blob_pool_allocator.clear();
+     g_workspace_pool_allocator.clear();
+ 
+@@ -74,15 +83,19 @@ void benchmark(const char* comment, const std::vector<ncnn::Mat>& _in, const ncn
+ 
+     if (model_param_data)
+     {
+-        net.load_param_mem(model_param_data);
++        g_benchmark_result = net.load_param_mem(model_param_data);
+     }
+     else
+     {
+-        net.load_param(comment);
++        g_benchmark_result = net.load_param(comment);
+     }
++    if (g_benchmark_result != 0)
++        return;
+ 
+     DataReaderFromEmpty dr;
+-    net.load_model(dr);
++    g_benchmark_result = net.load_model(dr);
++    if (g_benchmark_result != 0)
++        return;
+ 
+     const std::vector<const char*>& input_names = net.input_names();
+     const std::vector<const char*>& output_names = net.output_names();
+@@ -93,9 +106,10 @@ void benchmark(const char* comment, const std::vector<ncnn::Mat>& _in, const ncn
+         ncnn::sleep(10 * 1000);
+     }
+ 
+-    if (input_names.size() > _in.size())
++    if (input_names.empty() || output_names.empty() || input_names.size() > _in.size())
+     {
+         fprintf(stderr, "input %zu tensors while model has %zu inputs\n", _in.size(), input_names.size());
++        g_benchmark_result = -1;
+         return;
+     }
+ 
+@@ -113,13 +127,17 @@ void benchmark(const char* comment, const std::vector<ncnn::Mat>& _in, const ncn
+         for (size_t j = 0; j < input_names.size(); ++j)
+         {
+             ncnn::Mat in = _in[j];
+-            ex.input(input_names[j], in);
++            g_benchmark_result = ex.input(input_names[j], in);
++            if (g_benchmark_result != 0)
++                return;
+         }
+ 
+         for (size_t j = 0; j < output_names.size(); ++j)
+         {
+             ncnn::Mat out;
+-            ex.extract(output_names[j], out);
++            g_benchmark_result = ex.extract(output_names[j], out);
++            if (g_benchmark_result != 0)
++                return;
+         }
+     }
+ 
+@@ -135,13 +153,17 @@ void benchmark(const char* comment, const std::vector<ncnn::Mat>& _in, const ncn
+             for (size_t j = 0; j < input_names.size(); ++j)
+             {
+                 ncnn::Mat in = _in[j];
+-                ex.input(input_names[j], in);
++                g_benchmark_result = ex.input(input_names[j], in);
++                if (g_benchmark_result != 0)
++                    return;
+             }
+ 
+             for (size_t j = 0; j < output_names.size(); ++j)
+             {
+                 ncnn::Mat out;
+-                ex.extract(output_names[j], out);
++                g_benchmark_result = ex.extract(output_names[j], out);
++                if (g_benchmark_result != 0)
++                    return;
+             }
+         }
+ 
+@@ -310,12 +332,6 @@ int main(int argc, char** argv)
+         return -1;
+     }
+ 
+-#ifdef __EMSCRIPTEN__
+-    EM_ASM(
+-        FS.mkdir('/working');
+-        FS.mount(NODEFS, {root: '.'}, '/working'););
+-#endif // __EMSCRIPTEN__
+-
+     bool use_vulkan_compute = gpu_device != -1;
+ 
+     g_enable_cooling_down = cooling_down != 0;
+@@ -453,6 +469,8 @@ int main(int argc, char** argv)
+ #if NCNN_VULKAN
+     delete g_blob_vkallocator;
+     delete g_staging_vkallocator;
++    g_blob_vkallocator = 0;
++    g_staging_vkallocator = 0;
+ #endif // NCNN_VULKAN
+ 
+     return 0;
+diff --git a/benchmark/benchncnn_llm.cpp b/benchmark/benchncnn_llm.cpp
+index b22e742..dbe1821 100644
+--- a/benchmark/benchncnn_llm.cpp
++++ b/benchmark/benchncnn_llm.cpp
+@@ -43,6 +43,11 @@ static int g_warmup_loop_count = 8;
+ static int g_loop_count = 4;
+ static bool g_enable_cooling_down = true;
+ 
++// The browser wrapper requests one model, using the upstream model catalogue.
++static const char* g_benchmark_model_filter = 0;
++static bool g_benchmark_model_matched = false;
++static int g_benchmark_result = 0;
++
+ static ncnn::UnlockedPoolAllocator g_blob_pool_allocator;
+ static ncnn::PoolAllocator g_workspace_pool_allocator;
+ 
+@@ -784,8 +789,15 @@ int main(int argc, char** argv)
+ 
+     for (size_t i = 0; i < sizeof(models) / sizeof(models[0]); i++)
+     {
+-        if (use_vulkan_compute && models[i]->quantize_term)
++        if (g_benchmark_model_filter && strcmp(g_benchmark_model_filter, models[i]->name) != 0)
+             continue;
++        g_benchmark_model_matched = true;
++
++        if (use_vulkan_compute && models[i]->quantize_term)
++        {
++            fprintf(stderr, "weight-quantized model %s is not supported by this WebGPU benchmark\n", models[i]->name);
++            return -1;
++        }
+ 
+         int ret = benchmark_model(*models[i], opt);
+         if (ret != 0)
+@@ -798,6 +810,8 @@ int main(int argc, char** argv)
+ #if NCNN_VULKAN
+     delete g_blob_vkallocator;
+     delete g_staging_vkallocator;
++    g_blob_vkallocator = 0;
++    g_staging_vkallocator = 0;
+ #endif // NCNN_VULKAN
+ 
+     return 0;

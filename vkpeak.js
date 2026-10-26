@@ -134,7 +134,7 @@ async function runDevice(deviceIndex) {
 
     const id = ++requestId;
     setBusy(true, deviceIndex);
-    statusElement.textContent = `WebGPU ${device.index} 正在创建 vkwebgpu 设备并编译 shader…`;
+    statusElement.textContent = `WebGPU ${device.index} 正在创建 nikki 设备并编译 shader…`;
     try {
         const benchmarkResults = await runWorker(device, id);
         resultsByDevice.set(device.index, benchmarkResults);

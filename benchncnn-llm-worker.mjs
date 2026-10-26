@@ -1,6 +1,8 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { createDemoRuntime, allocate, release } from "./webgpu-runtime.mjs";
+
 const parameters = new URL(self.location.href).searchParams;
 const backend = parameters.get("backend");
 const gpuIndex = Number.parseInt(parameters.get("gpuIndex") || "0", 10);
@@ -15,14 +17,21 @@ function assetUrl(path) {
     return url;
 }
 
+let architecture;
+
 async function createRuntime(options = {}) {
-    const factory = (await import(assetUrl(`./assets/benchncnn-llm-${backend}.mjs`))).default;
-    return factory({
-        locateFile(path) {
-            return assetUrl(`./assets/${path}`).href;
+    const module = await createDemoRuntime("benchncnn-llm", backend, assetUrl, {
+        print(text) {
+            console.log(`[benchncnn-llm:${backend}] ${text}`);
+        },
+        // ncnn prints device information to stderr; keep it visible as diagnostics.
+        printErr(text) {
+            console.warn(`[benchncnn-llm:${backend}] ${text}`);
         },
         ...options,
     });
+    architecture = module.wasmArchitecture;
+    return module;
 }
 
 function parseResult(line) {
@@ -41,7 +50,7 @@ async function listDevices() {
 
     const module = await createRuntime({ noInitialRun: true });
     const capacity = 512;
-    const pointer = module._malloc(capacity);
+    const pointer = allocate(module, capacity);
     try {
         const count = await module.ccall("ncnn_benchmark_gpu_count", "number", [], [], { async: true });
         if (count < 0) throw new Error(`WebGPU device enumeration failed: ${count}`);
@@ -52,7 +61,7 @@ async function listDevices() {
             const length = module.ccall(
                 "ncnn_benchmark_gpu_name",
                 "number",
-                ["number", "number", "number"],
+                ["number", "pointer", "number"],
                 [index, pointer, capacity],
             );
             if (length < 0) throw new Error(`WebGPU device ${index} name query failed`);
@@ -63,7 +72,7 @@ async function listDevices() {
         }
         return devices;
     } finally {
-        module._free(pointer);
+        release(module, pointer);
         await module.ccall("ncnn_benchmark_destroy_gpu_instance", null, [], [], { async: true });
     }
 }
@@ -125,12 +134,12 @@ self.addEventListener("message", async (event) => {
     try {
         if (event.data.type === "list-devices") {
             const devices = await listDevices();
-            self.postMessage({ devices, id: event.data.id, status: "pass" });
+            self.postMessage({ architecture, devices, id: event.data.id, status: "pass" });
             return;
         }
 
         const results = await runBenchmark(event.data);
-        self.postMessage({ backend, gpuIndex, id: event.data.id, results, status: "pass" });
+        self.postMessage({ architecture, backend, gpuIndex, id: event.data.id, results, status: "pass" });
     } catch (error) {
         self.postMessage({
             backend,

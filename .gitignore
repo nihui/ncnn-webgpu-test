@@ -1,0 +1,7 @@
+/build*/
+/.deps/
+/tests/browser/node_modules/
+/test-results*.json
+/_site/
+/sdk-release.env
+__pycache__/
