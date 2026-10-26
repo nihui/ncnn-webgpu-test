@@ -30,6 +30,8 @@ jobs:
         run: |
           node tests/check-runtime-selection.mjs
           node tests/check-worker-diagnostics.mjs
+          node tests/check-vkpeak-worker-localization.mjs > test-results-worker-localization.json
+          cat test-results-worker-localization.json
           node tests/check-localization.mjs
       - name: Verify capability selection in Chromium without an SDK
         run: |

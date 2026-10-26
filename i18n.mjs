@@ -15,6 +15,8 @@ const preferences = globalThis.navigator?.languages;
 export const language = selectLanguage(preferences?.length ? preferences : [globalThis.navigator?.language || "en"]);
 
 const messages = {
+    "vkpeakEnumerationFailed": {"zh": "WebGPU 设备枚举失败", "en": "WebGPU device enumeration failed"},
+    "vkpeakCapabilityFailed": {"zh": "设备 {gpuIndex} 能力查询失败", "en": "Device {gpuIndex} capability query failed"},
     "squeezeHero": {"zh": "同一张图，<br><em>多个浏览器后端。</em>", "en": "One image,<br><em>multiple browser backends.</em>"},
     "squeezeIntro": {"zh": "真实 ImageNet 模型在本地完成推理。每次连续执行 10 轮，展示最快一轮的耗时、Top-3 分类和置信度。", "en": "Run a real ImageNet model locally. Each run performs 10 consecutive inferences and shows the fastest time, top-3 classes and confidence."},
     "checking": {"zh": "检测中", "en": "Checking"},

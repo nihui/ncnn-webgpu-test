@@ -1,6 +1,7 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { t } from "./i18n.mjs";
 import { createDemoRuntime, allocate, release } from "./webgpu-runtime.mjs";
 
 const parameters = new URL(self.location.href).searchParams;
@@ -34,7 +35,7 @@ async function listEnvironment() {
     const pointer = allocate(module, capacity);
     try {
         const count = await module.ccall("ncnn_vkpeak_gpu_count", "number", [], [], { async: true });
-        if (count < 0) throw new Error("WebGPU 设备枚举失败");
+        if (count < 0) throw new Error(t("vkpeakEnumerationFailed"));
 
         const devices = [];
         for (let index = 0; index < count; index++) {
@@ -87,7 +88,7 @@ async function runBenchmark(requestId) {
                 { async: true },
             );
 
-            if (supported < 0) throw new Error(`设备 ${gpuIndex} 能力查询失败`);
+            if (supported < 0) throw new Error(t("vkpeakCapabilityFailed", { gpuIndex }));
             if (!supported) {
                 results.push({ name, score: null, status: "unsupported", unit });
                 self.postMessage({ id: requestId, index, name, status: "progress", supported: false });
