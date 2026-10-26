@@ -22,6 +22,12 @@ if (cpuOnly) query.set("cpu-only", "");
 if (extraDemos) query.set("extra-demos", "");
 
 const moduleDir = option("--module-dir");
+const cpuModuleDir = option("--cpu-module-dir");
+const simdModuleDir = option("--simd-module-dir");
+if (!cpuModuleDir || !simdModuleDir) throw new Error("--cpu-module-dir and --simd-module-dir are required: use newly built CPU modules");
+for (const [directory, backend] of [[cpuModuleDir, "wasm"], [simdModuleDir, "wasm-simd"]])
+    for (const stem of ["squeezenet", "benchncnn", "benchncnn-llm"])
+        for (const ext of ["mjs", "wasm"]) await stat(resolve(directory, `${stem}-${backend}.${ext}`));
 const module64Dir = option("--module64-dir");
 const expectedArchitecture = option("--expect-arch");
 const disableMemory64 = args.includes("--disable-memory64");
@@ -45,6 +51,8 @@ const server = createServer(async (request, response) => {
         if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
         if (moduleDir && /^\/assets\/(squeezenet|benchncnn|benchncnn-llm|vkpeak)-webgpu\.(mjs|wasm)$/.test(pathname)) path = resolve(moduleDir, pathname.split("/").at(-1));
         if (module64Dir && /^\/assets\/wasm64\/(squeezenet|benchncnn|benchncnn-llm|vkpeak)-webgpu\.(mjs|wasm)$/.test(pathname)) path = resolve(module64Dir, pathname.split("/").at(-1));
+        if (/^\/assets\/(squeezenet|benchncnn|benchncnn-llm)-wasm\.(mjs|wasm)$/.test(pathname)) path = resolve(cpuModuleDir, pathname.split("/").at(-1));
+        if (/^\/assets\/(squeezenet|benchncnn|benchncnn-llm)-wasm-simd\.(mjs|wasm)$/.test(pathname)) path = resolve(simdModuleDir, pathname.split("/").at(-1));
         let body = await readFile(path);
         if (/^\/(backend|benchncnn|benchncnn-llm|vkpeak)-worker\.mjs$/.test(pathname)) body = Buffer.concat([
             // simulate an older engine for the wasm32 fallback path without a production override
@@ -90,6 +98,8 @@ try {
     report.memory64CapabilityDisabledForTest = disableMemory64;
     report.module64Dir = module64Dir ? resolve(module64Dir) : null;
     report.moduleDir = moduleDir ? resolve(moduleDir) : null;
+    report.cpuModuleDir = resolve(cpuModuleDir);
+    report.simdModuleDir = resolve(simdModuleDir);
     report.errors = errors;
     report.logs = logs;
     if (errors.length) report.status = "fail";

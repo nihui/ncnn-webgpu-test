@@ -1,9 +1,10 @@
 # ncnn WebGPU demo
 
-The checked-in UI, models and CPU assets remain the demo baseline.
-The build produces wasm32 and wasm64 application pairs for
-SqueezeNet, benchncnn, benchncnn_llm and vkpeak. It does not build nikki from source or update
-the committed assets. CI stages the tested site for GitHub Pages separately.
+The repository keeps UI sources and models, not precompiled application modules.
+The build produces scalar and SIMD wasm32 CPU modules for SqueezeNet, benchncnn
+and benchncnn_llm, plus wasm32/wasm64 WebGPU modules for those demos and vkpeak.
+CI stages the tested site for GitHub Pages; serve the staged output, not the
+source checkout. nikki is consumed as a prebuilt SDK rather than built here.
 
 ## Rebuild the demos from a prebuilt nikki SDK
 
@@ -58,13 +59,40 @@ A missing/incomplete SDK is an error, never a request to silently rebuild nikki.
 Use a fresh build directory and an SDK rebuilt with emsdk 6.0.12 when upgrading
 from an older toolchain; do not reuse old object files or static archives.
 
+## Build CPU backends
+
+The CPU modules reuse the same pinned ncnn sources and browser adapters. No
+nikki SDK is required. After activating emsdk 6.0.12, run:
+
+```sh
+for backend in wasm wasm-simd; do
+    CPU_BACKEND="$backend" BUILD_DIR="build-cpu-$backend" tools/build-cpu.sh
+done
+python3 tests/check-cpu-features.py build-cpu-wasm/assets build-cpu-wasm-simd/assets
+node tests/run-cpu-oracle.mjs build-cpu-wasm/assets build-cpu-wasm-simd/assets
+node tests/check-benchmark-contract.mjs build-cpu-wasm/assets build-cpu-wasm-simd/assets
+```
+
+Outputs retain `*-wasm.{mjs,wasm}` and `*-wasm-simd.{mjs,wasm}` filenames and
+the existing worker ABI. CPU backends remain wasm32; only the SIMD variant uses
+SIMD instructions. Deployment requires both CPU output directories and both
+WebGPU output directories. No deleted binary is downloaded or used as fallback.
+
+## Page language
+
+Pages choose the first supported language in the browser's preference list:
+Chinese (`zh` locales) or English (`en` locales), with English as the fallback
+when neither is listed. The shared `i18n.mjs` includes static labels,
+accessibility text and dynamic status/results. Model names, backend identifiers
+and benchmark values are not translated.
+
 ## Automatic browser selection
 
 WebGPU workers validate a small Memory64 module in the current browser. When
 supported they load `assets/wasm64/*-webgpu.mjs` and its matching Wasm; otherwise
 they keep the wasm32 `assets/*-webgpu.mjs` path. The choice is shared by all four
 demos and does not use browser-name/version guesses. Scalar and SIMD CPU backends
-remain the existing wasm32 modules. WebGPU must still be available; Memory64
+remain wasm32 modules, now built from source. WebGPU must still be available; Memory64
 does not add WebGPU support or change GPU buffer limits.
 
 Pointer parameters use Emscripten's `ccall` pointer type for either ABI, while
@@ -96,7 +124,7 @@ setting; the workflow does not enable Pages or modify its settings automatically
 
 After all ABI, CPU and browser checks pass, `tools/stage-site.py` creates a fresh
 `_site` containing only the existing HTML/JS/CSS/workers, the three SqueezeNet
-model files, all scalar/SIMD CPU pairs, and all four newly built WebGPU pairs for each architecture.
+model files, all newly built scalar/SIMD CPU pairs, and all four WebGPU pairs for each architecture.
 It rejects missing or empty runtime files, linked files, existing output and the
 committed GPU directory as input. It does not copy `.git`, `.deps`, source,
 tests, SDK files or build reports. Wasm32 filenames are unchanged; wasm64 pairs
@@ -116,8 +144,10 @@ SDK-free staging/release-resolution fixtures and local staging can be run with:
 python3 -m unittest discover -s tests -p test_pages.py -v
 node tests/check-runtime-selection.mjs
 node tests/check-worker-diagnostics.mjs
+node tests/check-localization.mjs
 npm ci --prefix tests/browser --ignore-scripts
 node tests/browser/check-selection.mjs --chrome /path/to/chrome
+node tests/browser/check-localization.mjs --chrome /path/to/chrome
 python3 tools/stage-site.py --module-dir build-wasm32/assets \
   --wasm64-module-dir build-wasm64/assets --output _site
 ```
@@ -137,17 +167,20 @@ for arch in wasm32 wasm64; do
     cmake --build "build-$arch" --target vkpeak-capabilities --parallel 2
     node tests/check-vkpeak-capabilities.mjs "build-$arch/tests/vkpeak-capabilities.mjs"
 done
-emcmake cmake -S . -B build-cpu-reference -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON -DNCNN_WEBGPU_EXTRA_DEMOS=ON \
-  -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
-cmake --build build-cpu-reference --parallel 2
-node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
-node tests/check-benchmark-contract.mjs build-cpu-reference/assets
+for backend in wasm wasm-simd; do
+    CPU_BACKEND="$backend" BUILD_DIR="build-cpu-$backend" tools/build-cpu.sh
+    node tests/check-module-abi.mjs --expect-arch wasm32 "build-cpu-$backend"/assets/*.mjs
+done
+python3 tests/check-cpu-features.py build-cpu-wasm/assets build-cpu-wasm-simd/assets
+node tests/run-cpu-oracle.mjs build-cpu-wasm/assets build-cpu-wasm-simd/assets
+node tests/check-benchmark-contract.mjs build-cpu-wasm/assets build-cpu-wasm-simd/assets
 node tests/browser/run.mjs --chrome /path/to/chrome \
   --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+  --cpu-module-dir build-cpu-wasm/assets --simd-module-dir build-cpu-wasm-simd/assets \
   --expect-arch wasm64 --extra-demos
 node tests/browser/run.mjs --chrome /path/to/chrome \
   --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+  --cpu-module-dir build-cpu-wasm/assets --simd-module-dir build-cpu-wasm-simd/assets \
   --expect-arch wasm32 --disable-memory64 --extra-demos
 ```
 
@@ -161,15 +194,14 @@ The ABI smoke check instantiates the linked pair and validates its exported
 functions, heap views and allocation helpers without requesting a GPU or running
 benchmark main functions; it also checks SqueezeNet filesystem helpers. It does not prove browser or GPU inference.
 
-The Node CPU check compares the reconstructed CPU wrapper with the untouched scalar
-and SIMD CPU modules using the actual committed SqueezeNet model. The explicit
-`SQUEEZENET_CPU_ORACLE=ON` diagnostic build is separate, never a missing-SDK
-fallback and never overwrites either CPU asset. Omitting the module argument
-checks only the old CPU modules, not the reconstructed wrapper. It is not browser
-or GPU validation. The browser check serves the original worker/UI assets locally and overlays only the newly
-built WebGPU pairs. Test-only instrumentation records actual compute dispatches,
-adapter identity, uncaptured WebGPU errors and unexpected device loss. No new
-pair is accepted by accidentally testing the old committed WebGPU assets.
+The Node CPU check compares the freshly built scalar/SIMD wrappers with saved
+numeric fixtures captured from the former CPU baseline using the real SqueezeNet
+model. It checks both backend parity and historical top-3 results without
+retaining generated binaries. It is not browser or GPU validation. The browser
+check serves UI/worker sources locally and overlays only the explicitly selected
+newly built CPU and WebGPU directories. Test-only instrumentation records actual
+compute dispatches, adapter identity, uncaptured WebGPU errors and unexpected
+device loss. A missing pair fails; no committed module can silently satisfy it.
 
 The fixtures are deterministic asymmetric-color RGBA images, square and
 non-square, plus a repeated run to check model/worker reuse. Tests require the
@@ -235,10 +267,10 @@ rejected before any device/kernel call, while matrix remains eligible.
 `onExit`/`onAbort`, `noInitialRun` device enumeration and `model=NAME` selection.
 Both use the pinned ncnn benchmark parameter graphs and synthetic zero weights,
 not downloaded model weights. Unknown models must fail rather than run the
-entire suite. Their wasm32 maximum memory remains 4 GiB, matching the committed modules;
+entire suite. Their wasm32 maximum memory remains 4 GiB, matching the previous modules;
 wasm64 permits 8 GiB.
-CPU diagnostic modules use distinct `*-reference` names and never replace the
-committed CPU assets.
+Optional CPU diagnostic modules retain distinct `*-reference` names; production
+CPU builds use the normal `*-wasm` and `*-wasm-simd` names.
 
 The focused CPU test checks a single blazeface iteration and CLI error handling;
 it does not run the large LLM benchmark. Browser `--extra-demos` additionally
@@ -251,4 +283,4 @@ arguments and an upstream shader provenance marker, not execution. The preserved
 and `copy-d2h` scenarios time mapped staging memcpy plus flush/invalidate, not
 submitted GPU transfers; do not present them as physical device bandwidth.
 The unchanged SqueezeNet parity test remains the
-numerical baseline. No existing CPU module or UI is regenerated by this build.
+numerical baseline. All application modules are generated by the build; UI sources are copied unchanged.

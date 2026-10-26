@@ -1,6 +1,10 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { t, localizePage } from "./i18n.mjs";
+
+localizePage();
+
 const models = [
     { label: "Hunyuan 0.5B Instruct", name: "hunyuan_0.5b" },
     { label: "Hunyuan 0.5B · INT8 G32", name: "hunyuan_0.5b_int8g32", quantized: true },
@@ -32,8 +36,8 @@ const loopCountElement = document.querySelector("#loop-count");
 const assetVersion = Date.now().toString(36);
 
 let targets = [
-    { backend: "wasm", color: "#7a8276", detail: "单线程标量 Wasm", key: "wasm", title: "WASM" },
-    { backend: "wasm-simd", color: "#d76528", detail: "单线程 Wasm SIMD", key: "wasm-simd", title: "WASM-SIMD" },
+    { backend: "wasm", color: "#7a8276", detail: t("scalarSingleThread"), key: "wasm", title: "WASM" },
+    { backend: "wasm-simd", color: "#d76528", detail: t("simdSingleThread"), key: "wasm-simd", title: "WASM-SIMD" },
 ];
 const records = new Map();
 const runOrder = [];
@@ -67,7 +71,7 @@ function renderModelButtons() {
         const title = document.createElement("strong");
         title.textContent = model.label;
         const detail = document.createElement("small");
-        detail.textContent = activeModel === model.name ? "正在比较全部后端…" : runOrder.includes(model.name) ? "再次运行" : model.quantized ? "weight-quant · CPU 后端" : "运行全部后端";
+        detail.textContent = activeModel === model.name ? t("comparingBackends") : runOrder.includes(model.name) ? t("runAgain") : model.quantized ? t("quantizedCpu") : t("runAll");
         button.append(title, detail);
         return button;
     });
@@ -107,13 +111,13 @@ function createChartRow(model, target, metric, best, maximum) {
         primary.textContent = `${valueNumber.toFixed(2)} tok/s`;
         value.append(primary);
     } else if (record?.status === "unsupported") {
-        value.textContent = "Vulkan 跳过";
+        value.textContent = t("vulkanSkipped");
     } else if (record?.status === "fail") {
         value.classList.add("is-fail");
-        value.textContent = "失败";
+        value.textContent = t("failed");
         value.title = record.error;
     } else {
-        value.textContent = record?.status === "running" ? "运行中…" : "等待…";
+        value.textContent = record?.status === "running" ? t("running") : t("waiting");
     }
 
     row.append(label, track, value);
@@ -133,7 +137,7 @@ function createMetricChart(model, metric, titleText, detailText) {
 
     const chart = document.createElement("div");
     chart.className = "bar-chart";
-    chart.setAttribute("aria-label", `${model.label} ${titleText} 吞吐量对比`);
+    chart.setAttribute("aria-label", t("throughputAria", { model: model.label, metric: titleText }));
     const values = targets
         .map((target) => records.get(recordKey(model, target)))
         .filter((record) => record?.status === "pass")
@@ -155,7 +159,7 @@ function renderModelResult(model) {
     const passed = targets.filter((target) => records.get(recordKey(model, target))?.status === "pass").length;
     const skipped = targets.filter((target) => records.get(recordKey(model, target))?.status === "unsupported").length;
     const summary = document.createElement("p");
-    summary.textContent = `${passed} 个后端完成${skipped ? ` · ${skipped} 个跳过` : ""} · tok/s，越长越快`;
+    summary.textContent = t("llmSummary", { passed, skipped });
     header.append(heading, summary);
     panel.append(
         header,
@@ -169,7 +173,7 @@ function renderResults() {
     if (runOrder.length === 0) {
         const empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = "选择一个模型，自动比较全部可用后端。";
+        empty.textContent = t("modelsEmpty");
         resultsElement.replaceChildren(empty);
         return;
     }
@@ -190,7 +194,7 @@ function queryDevices() {
         });
         worker.addEventListener("error", (event) => {
             worker.terminate();
-            reject(new Error(event.message || "WebGPU device enumeration Worker failed"));
+            reject(new Error(event.message || t("deviceWorkerFailed")));
         });
         worker.postMessage({ id, type: "list-devices" });
     });
@@ -211,7 +215,7 @@ function runWorker(target, model, loopCount) {
             if (event.data.status === "pass") resolve(event.data.results[0]);
             else reject(new Error(event.data.error));
         });
-        worker.addEventListener("error", (event) => reject(new Error(event.message || "benchncnn_llm Worker failed")));
+        worker.addEventListener("error", (event) => reject(new Error(event.message || t("llmWorkerFailed"))));
         worker.postMessage({ id, loopCount, model: model.name, type: "run" });
     });
 }
@@ -233,7 +237,7 @@ async function runModel(model) {
     for (let index = 0; index < runTargets.length; index++) {
         const target = runTargets[index];
         records.set(recordKey(model, target), { status: "running" });
-        statusElement.textContent = `${model.label} · ${target.title} 正在执行 warmup 与测试（${index + 1}/${runTargets.length}）…`;
+        statusElement.textContent = t("benchmarkRunning", { model: model.label, backend: target.title, current: index + 1, total: runTargets.length });
         renderResults();
         try {
             await runWorker(target, model, Number(loopCountElement.value));
@@ -249,7 +253,7 @@ async function runModel(model) {
         }
     }
 
-    statusElement.textContent = `${model.label} 完成：${passed} 个后端成功，${failed} 个失败。可继续选择其他模型，已有图表会保留。`;
+    statusElement.textContent = t("benchmarkDone", { model: model.label, passed, failed });
     activeModel = "";
     renderModelButtons();
     renderResults();
@@ -258,7 +262,7 @@ async function runModel(model) {
 async function initialize() {
     renderModelButtons();
     renderResults();
-    let deviceMessage = "当前浏览器没有 WebGPU；将比较 WASM 与 WASM-SIMD。";
+    let deviceMessage = t("cpuOnly");
     if (navigator.gpu) {
         try {
             const devices = await queryDevices();
@@ -270,10 +274,10 @@ async function initialize() {
                 key: `webgpu:${device.index}`,
                 title: `WebGPU ${device.index}`,
             })));
-            deviceMessage = `已枚举 ${devices.length} 个 WebGPU 设备；点击模型将自动顺序运行 ${targets.length} 个后端。`;
+            deviceMessage = t("modelsReady", { count: devices.length, total: targets.length });
         } catch (error) {
             console.error(error);
-            deviceMessage = `WebGPU 设备枚举失败：${error.message}；仍可比较两个 CPU 后端。`;
+            deviceMessage = t("enumerationCpuFallback", { error: error.message });
         }
     }
     ready = true;

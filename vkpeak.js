@@ -1,6 +1,10 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { t, localizePage } from "./i18n.mjs";
+
+localizePage();
+
 const deviceButtons = document.querySelector("#device-buttons");
 const resultsElement = document.querySelector("#results");
 const statusElement = document.querySelector("#status");
@@ -47,7 +51,7 @@ function renderResults() {
     const headerRow = document.createElement("tr");
     const scenarioHeader = document.createElement("th");
     scenarioHeader.scope = "col";
-    scenarioHeader.textContent = "测试条目";
+    scenarioHeader.textContent = t("scenario");
     headerRow.append(scenarioHeader);
     for (const device of devices) {
         const cell = document.createElement("th");
@@ -75,9 +79,9 @@ function renderResults() {
             const value = document.createElement("td");
             value.className = `is-${result?.status || "pending"}`;
             if (result?.status === "pass") value.textContent = `${result.score.toFixed(2)} ${result.unit}`;
-            else if (result?.status === "unsupported") value.textContent = "不支持";
-            else if (result?.status === "fail") value.textContent = "失败";
-            else value.textContent = "未运行";
+            else if (result?.status === "unsupported") value.textContent = t("unsupported");
+            else if (result?.status === "fail") value.textContent = t("failed");
+            else value.textContent = t("notRun");
             row.append(value);
         }
         body.append(row);
@@ -99,7 +103,7 @@ function queryEnvironment() {
         });
         worker.addEventListener("error", (event) => {
             worker.terminate();
-            reject(new Error(event.message || "WebGPU 设备枚举 Worker 失败"));
+            reject(new Error(event.message || t("deviceWorkerFailed")));
         });
         worker.postMessage({ id, type: "list-devices" });
     });
@@ -113,15 +117,15 @@ function runWorker(device, id) {
             if (event.data.id !== id) return;
             if (event.data.status === "progress") {
                 statusElement.textContent = event.data.supported
-                    ? `WebGPU ${device.index} 正在运行 ${event.data.name}…`
-                    : `WebGPU ${device.index} 跳过 ${event.data.name}（设备不支持）`;
+                    ? t("peakRunning", { index: device.index, name: event.data.name })
+                    : t("peakSkipped", { index: device.index, name: event.data.name });
                 return;
             }
             if (event.data.status === "pass") resolve(event.data.results);
             else reject(new Error(event.data.error));
         });
         worker.addEventListener("error", (event) => {
-            reject(new Error(event.message || "vkpeak Worker 失败"));
+            reject(new Error(event.message || t("vkpeakWorkerFailed")));
         });
         worker.postMessage({ id, type: "run" });
     });
@@ -134,17 +138,17 @@ async function runDevice(deviceIndex) {
 
     const id = ++requestId;
     setBusy(true, deviceIndex);
-    statusElement.textContent = `WebGPU ${device.index} 正在创建 nikki 设备并编译 shader…`;
+    statusElement.textContent = t("peakInitializing", { index: device.index });
     try {
         const benchmarkResults = await runWorker(device, id);
         resultsByDevice.set(device.index, benchmarkResults);
         renderResults();
         const passed = benchmarkResults.filter((item) => item.status === "pass").length;
         const unsupported = benchmarkResults.filter((item) => item.status === "unsupported").length;
-        statusElement.textContent = `WebGPU ${device.index} 完成：${passed} 项有效，${unsupported} 项设备不支持。`;
+        statusElement.textContent = t("peakDone", { index: device.index, passed, unsupported });
     } catch (error) {
         console.error(error);
-        statusElement.textContent = `WebGPU ${device.index} 失败：${error.message}`;
+        statusElement.textContent = t("backendFailed", { backend: `WebGPU ${device.index}`, error: error.message });
     } finally {
         activeWorker?.terminate();
         activeWorker = undefined;
@@ -154,8 +158,8 @@ async function runDevice(deviceIndex) {
 
 async function initialize() {
     if (!navigator.gpu) {
-        document.querySelector("#device-placeholder").textContent = "浏览器不支持 WebGPU";
-        statusElement.textContent = "当前浏览器没有 navigator.gpu。";
+        document.querySelector("#device-placeholder").textContent = t("webgpuUnsupported");
+        statusElement.textContent = t("noNavigatorGpu");
         return;
     }
 
@@ -163,15 +167,15 @@ async function initialize() {
         const environment = await queryEnvironment();
         devices = environment.devices;
         scenarios = environment.scenarios;
-        if (devices.length === 0) throw new Error("ncnn 未报告可用 GPU");
+        if (devices.length === 0) throw new Error(t("noGpu"));
 
         deviceButtons.replaceChildren(...devices.map(createDeviceButton));
         renderResults();
-        statusElement.textContent = `已枚举 ${devices.length} 个 WebGPU 设备，选择设备开始测试。`;
+        statusElement.textContent = t("devicesReady", { count: devices.length });
     } catch (error) {
         console.error(error);
-        document.querySelector("#device-placeholder").textContent = "设备枚举失败";
-        statusElement.textContent = `WebGPU 设备枚举失败：${error.message}`;
+        document.querySelector("#device-placeholder").textContent = t("deviceEnumerationFailed");
+        statusElement.textContent = t("enumerationError", { error: error.message });
     }
 }
 

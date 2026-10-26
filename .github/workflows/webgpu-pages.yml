@@ -30,11 +30,13 @@ jobs:
         run: |
           node tests/check-runtime-selection.mjs
           node tests/check-worker-diagnostics.mjs
+          node tests/check-localization.mjs
       - name: Verify capability selection in Chromium without an SDK
         run: |
           npm ci --prefix tests/browser --ignore-scripts
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           node tests/browser/check-selection.mjs --chrome "$CHROME" --output test-results-selection.json
+          node tests/browser/check-localization.mjs --chrome "$CHROME" --output test-results-localization.json
       - name: Resolve the latest formal SDK release once
         run: |
           python3 tools/resolve-sdk-release.py > sdk-release.env
@@ -73,26 +75,27 @@ jobs:
             node tests/check-vkpeak-capabilities.mjs "build-$arch/tests/vkpeak-capabilities.mjs" > "test-results-vkpeak-capabilities-$arch.json"
             cat "test-results-vkpeak-capabilities-$arch.json"
           done
-      - name: Build diagnostic CPU wrapper and compare against committed CPU modules
+      - name: Build and verify scalar and SIMD CPU modules
         run: |
-          emcmake cmake -S . -B build-cpu-reference -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DSQUEEZENET_CPU_ORACLE=ON -DNCNN_WEBGPU_EXTRA_DEMOS=ON \
-            -DNCNN_SOURCE_DIR="$PWD/.deps/ncnn"
-          for target in squeezenet-reference benchncnn-reference benchncnn-llm-reference; do
-            cmake --build build-cpu-reference --target "$target" --parallel 2
+          for backend in wasm wasm-simd; do
+            CPU_BACKEND="$backend" BUILD_DIR="build-cpu-$backend" tools/build-cpu.sh
+            node tests/check-module-abi.mjs --expect-arch wasm32 "build-cpu-$backend"/assets/*.mjs > "test-results-module-abi-$backend.json"
           done
-          node tests/run-cpu-oracle.mjs build-cpu-reference/assets/squeezenet-reference.mjs
-          node tests/check-benchmark-contract.mjs build-cpu-reference/assets > test-results-benchmark-contract.json
+          python3 tests/check-cpu-features.py build-cpu-wasm/assets build-cpu-wasm-simd/assets
+          node tests/run-cpu-oracle.mjs build-cpu-wasm/assets build-cpu-wasm-simd/assets
+          node tests/check-benchmark-contract.mjs build-cpu-wasm/assets build-cpu-wasm-simd/assets > test-results-benchmark-contract.json
           cat test-results-benchmark-contract.json
-          c++ -std=c++11 tests/benchmark-device-validation.cpp -o build-cpu-reference/benchmark-device-validation
-          build-cpu-reference/benchmark-device-validation
+          c++ -std=c++11 tests/benchmark-device-validation.cpp -o build-cpu-wasm/benchmark-device-validation
+          build-cpu-wasm/benchmark-device-validation
       - name: Verify worker ABI and CPU versus WebGPU results
         timeout-minutes: 80
         run: |
           CHROME="$(command -v google-chrome || command -v google-chrome-stable)"
           node tests/browser/run.mjs --chrome "$CHROME" --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+            --cpu-module-dir build-cpu-wasm/assets --simd-module-dir build-cpu-wasm-simd/assets \
             --expect-arch wasm64 --extra-demos --output test-results-browser-wasm64.json
           node tests/browser/run.mjs --chrome "$CHROME" --module-dir build-wasm32/assets --module64-dir build-wasm64/assets \
+            --cpu-module-dir build-cpu-wasm/assets --simd-module-dir build-cpu-wasm-simd/assets \
             --expect-arch wasm32 --disable-memory64 --extra-demos --output test-results-browser-wasm32.json
       - name: Stage the complete site
         run: |

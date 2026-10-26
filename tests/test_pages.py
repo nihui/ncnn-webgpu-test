@@ -32,6 +32,8 @@ class PagesTests(unittest.TestCase):
         self.modules = self.root / "build/assets"
         self.modules64 = self.root / "build-wasm64/assets"
         self.output = self.root / "_site"
+        self.cpu_modules = self.root / "build-cpu-wasm/assets"
+        self.simd_modules = self.root / "build-cpu-wasm-simd/assets"
         stage_site.ROOT = self.root
         self.expected = set(stage_site.STATIC_FILES)
         for name in stage_site.STATIC_FILES:
@@ -41,7 +43,7 @@ class PagesTests(unittest.TestCase):
                 for suffix in ("mjs", "wasm"):
                     name = f"assets/{module}-{backend}.{suffix}"
                     self.expected.add(name)
-                    self.write(name, f"cpu:{name}")
+                    self.write(f"build-cpu-{backend}/assets/{Path(name).name}", f"cpu:{name}")
         for module in ("squeezenet", "benchncnn", "benchncnn-llm", "vkpeak"):
             for suffix in ("mjs", "wasm"):
                 name = f"{module}-webgpu.{suffix}"
@@ -60,13 +62,25 @@ class PagesTests(unittest.TestCase):
     def test_complete_allowlist_and_new_gpu_pairs(self):
         for name in (".git/config", ".deps/nikki/lib/libnikki.a", "src/private.cpp", "tests/private.txt", "assets/unlisted.wasm"):
             self.write(name, "not for deployment")
-        stage_site.stage(self.modules, self.modules64, self.output)
+        stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
         actual = {p.relative_to(self.output).as_posix() for p in self.output.rglob("*") if p.is_file()}
         self.assertEqual(actual, self.expected)
-        self.assertEqual(len(actual), 47)
+        self.assertEqual(len(actual), 48)
         for name in actual:
-            source = (self.modules64 if "/wasm64/" in name else self.modules) / Path(name).name if "-webgpu." in name else self.root / name
+            source = (self.modules64 if "/wasm64/" in name else self.modules) / Path(name).name if "-webgpu." in name else ((self.simd_modules if "-wasm-simd." in name else self.cpu_modules) / Path(name).name if name.startswith("assets/") else self.root / name)
             self.assertEqual((self.output / name).read_bytes(), source.read_bytes())
+
+    def test_cpu_modules_are_built_not_committed(self):
+        for directory in (self.cpu_modules, self.simd_modules):
+            for source in sorted(directory.iterdir()):
+                with self.subTest(source=source.name):
+                    data = source.read_bytes()
+                    self.write(f"assets/{source.name}", "stale committed CPU")
+                    source.unlink()
+                    with self.assertRaisesRegex(ValueError, "runtime file"):
+                        stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
+                    self.assertFalse(self.output.exists())
+                    source.write_bytes(data)
 
     def test_each_missing_gpu_pair_member_fails_before_staging(self):
         for source in sorted([*self.modules.iterdir(), *self.modules64.iterdir()]):
@@ -74,18 +88,18 @@ class PagesTests(unittest.TestCase):
                 data = source.read_bytes()
                 source.unlink()
                 with self.assertRaisesRegex(ValueError, "runtime file"):
-                    stage_site.stage(self.modules, self.modules64, self.output)
+                    stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
                 self.assertFalse(self.output.exists())
                 source.write_bytes(data)
 
     def test_missing_static_cpu_and_model_files_fail(self):
-        for name in ("index.html", "backend-worker.mjs", "models/squeezenet_v1.1.bin", "assets/benchncnn-wasm-simd.wasm"):
+        for name in ("index.html", "i18n.mjs", "backend-worker.mjs", "models/squeezenet_v1.1.bin", "assets/benchncnn-wasm-simd.wasm"):
             with self.subTest(name=name):
-                source = self.root / name
+                source = (self.simd_modules / Path(name).name if name.startswith("assets/") else self.root / name)
                 data = source.read_bytes()
                 source.unlink()
                 with self.assertRaises(ValueError):
-                    stage_site.stage(self.modules, self.modules64, self.output)
+                    stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
                 self.assertFalse(self.output.exists())
                 source.write_bytes(data)
 
@@ -93,11 +107,11 @@ class PagesTests(unittest.TestCase):
         source = self.modules / "squeezenet-webgpu.wasm"
         source.write_bytes(b"")
         with self.assertRaises(ValueError):
-            stage_site.stage(self.modules, self.modules64, self.output)
+            stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
         source.unlink()
         source.symlink_to(self.root / "assets/squeezenet-webgpu.wasm")
         with self.assertRaises(ValueError):
-            stage_site.stage(self.modules, self.modules64, self.output)
+            stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
         self.assertFalse(self.output.exists())
 
     def test_old_gpu_directory_and_stale_output_fail(self):
@@ -105,7 +119,7 @@ class PagesTests(unittest.TestCase):
             stage_site.stage(self.root / "assets", self.modules64, self.output)
         sentinel = self.write("_site/keep.txt", "keep")
         with self.assertRaisesRegex(ValueError, "already exists"):
-            stage_site.stage(self.modules, self.modules64, self.output)
+            stage_site.stage(self.modules, self.modules64, self.output, self.cpu_modules, self.simd_modules)
         self.assertEqual(sentinel.read_text(), "keep")
 
     def test_symlink_module_directory_fails(self):

@@ -1,9 +1,13 @@
 // Copyright 2026 Tencent
 // SPDX-License-Identifier: BSD-3-Clause
 
+import { t, localizePage } from "./i18n.mjs";
+
+localizePage();
+
 const backendInfo = new Map([
     ["wasm", {
-        detail: "标量 CPU",
+        detail: t("scalarCpu"),
         kind: "wasm",
         order: 1,
         title: "WASM",
@@ -51,15 +55,15 @@ function supportsWasmSimd() {
 }
 
 function updateCapabilities() {
-    document.querySelector("#cap-wasm").textContent = "可用";
-    document.querySelector("#cap-wasm-simd").textContent = supportsWasmSimd() ? "可用" : "不支持";
-    document.querySelector("#cap-webgpu").textContent = navigator.gpu ? "正在枚举" : "不支持";
+    document.querySelector("#cap-wasm").textContent = t("available");
+    document.querySelector("#cap-wasm-simd").textContent = supportsWasmSimd() ? t("available") : t("unsupported");
+    document.querySelector("#cap-webgpu").textContent = navigator.gpu ? t("enumerating") : t("unsupported");
 
     document.querySelector('[data-backend-key="wasm-simd"]').disabled = !supportsWasmSimd();
     const placeholder = document.querySelector("#webgpu-device-placeholder");
     if (!navigator.gpu) {
-        placeholder.querySelector("small").textContent = "浏览器不支持";
-        document.querySelector("#webgpu-chart-placeholder .benchmark-value").textContent = "不支持";
+        placeholder.querySelector("small").textContent = t("browserUnsupported");
+        document.querySelector("#webgpu-chart-placeholder .benchmark-value").textContent = t("unsupported");
     }
 }
 
@@ -67,7 +71,7 @@ async function loadLabels() {
     if (!labelsPromise) {
         labelsPromise = fetch(`./models/synset_words.txt?v=${assetVersion}`)
             .then((response) => {
-                if (!response.ok) throw new Error(`类别文件加载失败：HTTP ${response.status}`);
+                if (!response.ok) throw new Error(t("labelsFailed", { status: response.status }));
                 return response.text();
             })
             .then((text) => text.trim().split(/\r?\n/).map((line) => line.replace(/^\S+\s+/, "")));
@@ -102,7 +106,7 @@ function getWorker(backendKey) {
         for (const [id, request] of pendingRequests) {
             if (request.backendKey !== backendKey) continue;
             pendingRequests.delete(id);
-            request.reject(new Error(event.message || `${backendKey} Worker 失败`));
+            request.reject(new Error(event.message || t("workerFailed", { backend: backendKey })));
         }
         releaseWorker(backendKey);
     });
@@ -156,7 +160,7 @@ function updateTimingComparison(backendKey, fastestMs) {
         row.classList.toggle("has-result", hasResult);
         row.classList.toggle("is-best", hasResult && timing === minimum);
         row.querySelector(".benchmark-bar").style.width = hasResult ? `${timing / maximum * 100}%` : "0";
-        row.querySelector(".benchmark-value").textContent = hasResult ? `${timing.toFixed(2)} ms` : "待运行";
+        row.querySelector(".benchmark-value").textContent = hasResult ? `${timing.toFixed(2)} ms` : t("notRun");
     });
 }
 
@@ -181,7 +185,7 @@ function renderResult(payload, labels) {
         const confidence = Math.max(0, Math.min(1, item.score));
         row.innerHTML = `
             <span class="rank">${rank + 1}</span>
-            <span class="class-name">${labels[item.index] || `类别 ${item.index}`}</span>
+            <span class="class-name">${labels[item.index] || t("classFallback", { index: item.index })}</span>
             <span class="class-id">#${item.index}</span>
             <span class="confidence">${(confidence * 100).toFixed(2)}%</span>
             <span class="confidence-track"><span style="width:${confidence * 100}%"></span></span>
@@ -208,15 +212,15 @@ async function runBackend(backendKey) {
     const initialized = workers.has(backendKey);
     setBusy(true, backendKey);
     statusLine.textContent = initialized
-        ? `${info.title} 正在连续推理 10 次…`
-        : `${info.title} 正在加载模型并连续推理 10 次…`;
+        ? t("runningTen", { backend: info.title })
+        : t("loadingTen", { backend: info.title });
     try {
         const [payload, labels] = await Promise.all([requestInference(backendKey), loadLabels()]);
         renderResult(payload, labels);
-        statusLine.textContent = `${info.title} 完成，最快 ${payload.fastestMs.toFixed(2)} ms`;
+        statusLine.textContent = t("inferenceDone", { backend: info.title, time: payload.fastestMs.toFixed(2) });
     } catch (error) {
         console.error(error);
-        statusLine.textContent = `${info.title} 失败：${error.message}`;
+        statusLine.textContent = t("backendFailed", { backend: info.title, error: error.message });
     } finally {
         if (info.kind !== "webgpu")
             releaseWorker(backendKey);
@@ -267,7 +271,7 @@ function createWebgpuChartRow(device) {
 
     const value = document.createElement("span");
     value.className = "benchmark-value";
-    value.textContent = "待运行";
+    value.textContent = t("notRun");
     row.append(title, track, value);
     return row;
 }
@@ -284,7 +288,7 @@ async function queryWebgpuDevices() {
                 else reject(new Error(event.data.error));
             });
             worker.addEventListener("error", (event) => {
-                reject(new Error(event.message || "WebGPU 设备枚举 Worker 失败"));
+                reject(new Error(event.message || t("deviceWorkerFailed")));
             });
             worker.postMessage({ id, type: "list-devices" });
         });
@@ -302,7 +306,7 @@ async function discoverWebgpuDevices() {
     try {
         const devices = await queryWebgpuDevices();
         if (devices.length === 0)
-            throw new Error("ncnn 未报告可用 GPU");
+            throw new Error(t("noGpu"));
 
         for (const device of devices) {
             backendButtons.insertBefore(createWebgpuButton(device), placeholder);
@@ -310,20 +314,20 @@ async function discoverWebgpuDevices() {
         }
         placeholder.remove();
         chartPlaceholder.remove();
-        document.querySelector("#cap-webgpu").textContent = `${devices.length} 个设备`;
+        document.querySelector("#cap-webgpu").textContent = t("deviceCount", { count: devices.length });
         setBusy(false);
     } catch (error) {
         console.error(error);
-        placeholder.querySelector("small").textContent = "设备枚举失败";
-        chartPlaceholder.querySelector(".benchmark-value").textContent = "枚举失败";
-        document.querySelector("#cap-webgpu").textContent = "枚举失败";
-        statusLine.textContent = `WebGPU 设备枚举失败：${error.message}`;
+        placeholder.querySelector("small").textContent = t("deviceEnumerationFailed");
+        chartPlaceholder.querySelector(".benchmark-value").textContent = t("enumerationFailed");
+        document.querySelector("#cap-webgpu").textContent = t("enumerationFailed");
+        statusLine.textContent = t("enumerationError", { error: error.message });
     }
 }
 
 async function useImage(file) {
     if (!file?.type.startsWith("image/")) {
-        statusLine.textContent = "请选择 JPEG、PNG、WebP 等浏览器支持的图片。";
+        statusLine.textContent = t("chooseSupportedImage");
         return;
     }
 
@@ -342,8 +346,8 @@ async function useImage(file) {
     preview.hidden = false;
     previewPlaceholder.hidden = true;
     sourceMeta.textContent = `${file.name} · ${bitmap.width}×${bitmap.height}`
-        + (scale < 1 ? ` · 推理输入缩放至 ${imageState.width}×${imageState.height}` : "");
-    statusLine.textContent = "图片已就绪，请选择一个后端。";
+        + (scale < 1 ? t("resizedInput", { width: imageState.width, height: imageState.height }) : "");
+    statusLine.textContent = t("imageReady");
     setBusy(false);
 }
 
@@ -352,7 +356,7 @@ async function selectImage(file) {
         await useImage(file);
     } catch (error) {
         console.error(error);
-        statusLine.textContent = `图片读取失败：${error.message}`;
+        statusLine.textContent = t("imageReadFailed", { error: error.message });
     }
 }
 

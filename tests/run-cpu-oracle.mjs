@@ -1,12 +1,20 @@
-// Run the untouched browser CPU modules in Node via Emscripten instantiateWasm.
+// Run the source-built browser CPU modules in Node via Emscripten instantiateWasm.
 // This checks model/ABI/fixtures only. It is NOT a browser or WebGPU test.
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { readFile, writeFile } from "node:fs/promises";
 import { cases, pixels, compareTop3, validateABI } from "./fixtures.mjs";
 const results = new Map();
-const modules = ["wasm", "wasm-simd"].map((backend) => [backend, new URL(`../assets/squeezenet-${backend}.mjs`, import.meta.url)]);
-if (process.argv[2]) modules.push(["rebuilt-cpu", pathToFileURL(resolve(process.argv[2]))]);
+const scalarDirectory = process.argv[2];
+const simdDirectory = process.argv[3];
+if (!scalarDirectory || !simdDirectory) throw new Error("Pass built scalar and SIMD module directories");
+const baseline = JSON.parse(await readFile(new URL("./cpu-baseline.json", import.meta.url)));
+const modelBytes = await readFile(new URL("../models/squeezenet_v1.1.bin", import.meta.url));
+if (createHash("sha256").update(modelBytes).digest("hex") !== baseline.modelSha256)
+    throw new Error("Model differs from the recorded CPU fixture baseline");
+const modules = [["wasm", scalarDirectory], ["wasm-simd", simdDirectory]]
+    .map(([backend, directory]) => [backend, pathToFileURL(resolve(directory, `squeezenet-${backend}.mjs`))]);
 for (const [backend, moduleUrl] of modules) {
     const factory = (await import(moduleUrl.href)).default;
     const bytes = await readFile(new URL(moduleUrl.href.replace(/\.mjs$/, ".wasm")));
@@ -37,7 +45,11 @@ for (const [backend, moduleUrl] of modules) {
     await module.ccall("ncnn_squeezenet_destroy", null, [], [], { async: true });
     results.set(backend, backendResults);
 }
-for (const [backend, backendResults] of results) for (let index = 0; index < cases.length; index++) compareTop3(results.get("wasm")[index].results, backendResults[index].results, `${cases[index][0]} ${backend}`);
-const report = { status: "pass", rebuiltWrapperTested: results.has("rebuilt-cpu"), environment: "Node CPU oracle only; no browser or GPU", model: "committed SqueezeNet v1.1", results: Object.fromEntries(results) };
+for (const [backend, backendResults] of results) for (let index = 0; index < cases.length; index++) {
+    if (baseline.cases[index].name !== cases[index][0]) throw new Error("Baseline fixture mismatch");
+    compareTop3(baseline.cases[index].results, backendResults[index].results, `${cases[index][0]} ${backend} baseline`);
+    compareTop3(results.get("wasm")[index].results, backendResults[index].results, `${cases[index][0]} ${backend}`);
+}
+const report = { status: "pass", sourceBuiltBackends: ["wasm", "wasm-simd"], environment: "Node CPU oracle only; no browser or GPU", model: "committed SqueezeNet v1.1", results: Object.fromEntries(results) };
 await writeFile("test-results-cpu-node.json", JSON.stringify(report, null, 2) + "\n");
 console.log(JSON.stringify(report));

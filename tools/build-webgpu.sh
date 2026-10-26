@@ -43,7 +43,7 @@ emcmake cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_C_FLAGS="$arch_flags" -DCMAKE_CXX_FLAGS="$arch_flags" -DCMAKE_EXE_LINKER_FLAGS="$arch_flags" \
     -DNCNN_WEBGPU_WASM_ARCH="$WASM_ARCH" \
     -DCMAKE_BUILD_TYPE=Release -Dnikki_DIR="$NIKKI_PREFIX/lib/cmake/nikki" \
-    -DNCNN_SOURCE_DIR="$NCNN_SOURCE_DIR" -DVKPEAK_SOURCE_DIR="$VKPEAK_SOURCE_DIR" -DSQUEEZENET_CPU_ORACLE=OFF \
+    -DNCNN_SOURCE_DIR="$NCNN_SOURCE_DIR" -DVKPEAK_SOURCE_DIR="$VKPEAK_SOURCE_DIR" -DSQUEEZENET_CPU_ORACLE=OFF -DNCNN_CPU_BACKEND= \
     -DNCNN_WEBGPU_EXTRA_DEMOS="${NCNN_WEBGPU_EXTRA_DEMOS:-ON}"
 if [[ $# == 0 ]]; then
     set -- squeezenet-webgpu benchncnn-webgpu benchncnn-llm-webgpu vkpeak-webgpu

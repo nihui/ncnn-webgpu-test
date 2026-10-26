@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ncnn benchncnn 浏览器性能测试">
-    <title>benchncnn · Browser Benchmark</title>
+    <meta name="description" content="ncnn benchncnn browser benchmark" data-i18n-content="benchDescription">
+    <title data-i18n="benchTitle">benchncnn · Browser Benchmark</title>
     <link rel="stylesheet" href="./benchmark.css">
 </head>
 <body>
@@ -16,16 +16,16 @@
                 <a href="./vkpeak.html">vkpeak</a>
             </nav>
             <p class="eyebrow">NCNN · WASM · VULKAN ON nikki</p>
-            <h1>浏览器版 <em>benchncnn</em></h1>
-            <p class="lede">选择一个 ncnn 内置模型，页面会自动顺序运行 WASM、WASM-SIMD 与每个 WebGPU 设备。每个后端完成后立即加入耗时柱状图。</p>
+            <h1 data-i18n-html="benchHero"><em>benchncnn</em> in your browser</h1>
+            <p class="lede" data-i18n="benchIntro">Choose a built-in ncnn model to run WASM, WASM-SIMD and each WebGPU device in sequence. Timings appear in the chart as each backend finishes.</p>
         </header>
 
         <section class="controls" aria-labelledby="run-title">
             <div>
-                <p class="section-label">01 / CONFIGURE</p>
-                <h2 id="run-title">选择模型</h2>
+                <p class="section-label" data-i18n="configureSection">01 / CONFIGURE</p>
+                <h2 id="run-title" data-i18n="chooseModel">Choose a model</h2>
                 <div class="control-options">
-                    <label>正式循环次数
+                    <label><span data-i18n="loopCount">Measured iterations</span>
                         <select id="loop-count">
                             <option value="1">1</option>
                             <option value="4" selected>4</option>
@@ -34,24 +34,24 @@
                     </label>
                 </div>
             </div>
-            <div id="model-buttons" class="model-buttons" aria-label="benchncnn 模型"></div>
-            <p id="status" class="status" aria-live="polite">正在枚举 WebGPU 设备，稍后选择模型开始测试。</p>
+            <div id="model-buttons" class="model-buttons" aria-label="benchncnn models" data-i18n-aria-label="benchModels"></div>
+            <p id="status" class="status" aria-live="polite" data-i18n="modelEnumPending">Enumerating WebGPU devices. Choose a model when ready.</p>
         </section>
 
         <section class="results-section" aria-labelledby="results-title">
             <div class="results-heading">
                 <div>
-                    <p class="section-label">02 / RESULT</p>
-                    <h2 id="results-title">模型耗时</h2>
+                    <p class="section-label" data-i18n="benchmarkResultSection">02 / RESULTS</p>
+                    <h2 id="results-title" data-i18n="modelTimings">Model timings</h2>
                 </div>
-                <p>保持原生 benchncnn 口径，计时包含创建 Extractor、输入、提取输出及 Extractor 销毁；模型加载和 warmup 不计入。</p>
+                <p data-i18n="benchTiming">Matches native benchncnn timing: Extractor creation, input, output extraction and Extractor destruction are included; model loading and warmup are excluded.</p>
             </div>
-            <div id="results"><div class="empty">选择一个模型，自动比较全部可用后端。</div></div>
+            <div id="results"><div class="empty" data-i18n="modelsEmpty">Choose a model to compare all available backends.</div></div>
         </section>
 
         <footer>
             <span>ncnn benchncnn · min / max / avg</span>
-            <span>柱越短越快 · 各后端顺序运行，避免相互争抢资源</span>
+            <span data-i18n="benchFooter">Shorter bars are faster · Backends run sequentially to avoid resource contention</span>
         </footer>
     </main>
     <script type="module" src="./benchncnn.js"></script>

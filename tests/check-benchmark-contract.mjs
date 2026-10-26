@@ -1,4 +1,4 @@
-// Bounded Node-only checks of the unchanged CPU assets and rebuilt wrappers.
+// Bounded Node-only checks of the source-built scalar and SIMD CPU modules.
 // One small CNN runs with one measured iteration and its normal warmups. LLM
 // checks cover selection/error/lifecycle only, NOT model inference or WebGPU.
 import assert from "node:assert/strict";
@@ -61,12 +61,11 @@ if (process.argv[2] === "--case") {
     function args(model, gpu = "-1", loop = "1") {
         return [loop, "1", "2", gpu, "0", `model=${model}`];
     }
-    const directory = join(dirname(scriptPath), "..", "assets");
+    if (!process.argv[2] || !process.argv[3]) throw new Error("Pass built scalar and SIMD module directories");
     const builds = [
-        { label: "committed-wasm", dir: directory, suffix: "wasm" },
-        { label: "committed-wasm-simd", dir: directory, suffix: "wasm-simd" },
+        { label: "built-wasm", dir: resolve(process.argv[2]), suffix: "wasm" },
+        { label: "built-wasm-simd", dir: resolve(process.argv[3]), suffix: "wasm-simd" },
     ];
-    if (process.argv[2]) builds.push({ label: "rebuilt-cpu", dir: resolve(process.argv[2]), suffix: "reference" });
     for (const build of builds) {
         for (const name of ["benchncnn", "benchncnn-llm"]) {
             const path = join(build.dir, `${name}-${build.suffix}.mjs`);
@@ -77,7 +76,7 @@ if (process.argv[2] === "--case") {
             assert.notEqual(invalid.exitStatus, 0);
             assert.ok(invalid.lines.some((line) => line.includes("unknown model __missing_benchmark_model__")));
             assert.equal(invalid.lines.filter((line) => pattern.test(line)).length, 0);
-            if (build.label === "rebuilt-cpu") {
+            {
                 const model = name === "benchncnn" ? "blazeface" : "qwen2.5_0.5b";
                 for (const rejected of [args(model, "0"), args(model, "-1", "0"), args(model, "-1", "not-a-number"), args(model).slice(0, -1)]) {
                     const result = await run(path, "run", rejected);
