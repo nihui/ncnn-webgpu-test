@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Copyright 2026 Tencent
+# SPDX-License-Identifier: BSD-3-Clause
+set -euo pipefail
+: "${NIKKI_VERSION:?Set NIKKI_VERSION to a published YYYYMMDD nikki SDK release}"
+: "${NIKKI_REVISION:?Set NIKKI_REVISION to the full release source commit}"
+[[ "$NIKKI_VERSION" =~ ^[0-9]{8}$ ]] || { echo 'Invalid YYYYMMDD release version' >&2; exit 1; }
+[[ "$NIKKI_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid source revision' >&2; exit 1; }
+export WASM_ARCH="${WASM_ARCH:-wasm32}"
+case "$WASM_ARCH" in wasm32|wasm64) ;; *) echo 'WASM_ARCH must be wasm32 or wasm64' >&2; exit 1 ;; esac
+DIGEST_VARIABLE="NIKKI_${WASM_ARCH^^}_SHA256"
+export NIKKI_ARCHIVE_SHA256="${!DIGEST_VARIABLE:-}"
+[[ "$NIKKI_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "Missing or invalid $DIGEST_VARIABLE; resolve the release first" >&2; exit 1; }
+DESTINATION="${1:-.deps/nikki-$WASM_ARCH}"
+[[ ! -e "$DESTINATION" ]] || { echo "Destination already exists: $DESTINATION" >&2; exit 1; }
+PARENT="$(dirname "$DESTINATION")"
+mkdir -p "$PARENT"
+TEMP="$(mktemp -d "$PARENT/.nikki-download.XXXXXX")"
+trap 'rm -rf "$TEMP"' EXIT
+ARCHIVE="nikki-${NIKKI_VERSION}-${WASM_ARCH}-emscripten.tar.gz"
+URL="https://github.com/nihui/nikki/releases/download/${NIKKI_VERSION}/${ARCHIVE}"
+# both architectures use the same already resolved release, never a second latest lookup
+curl --fail --location --retry 3 --output "$TEMP/$ARCHIVE" "$URL"
+python3 - "$TEMP/$ARCHIVE" "$DESTINATION" <<'PY'
+import hashlib, os, pathlib, shutil, sys, tarfile
+
+def require(condition, message):
+    if not condition:
+        raise SystemExit(message)
+
+archive_path, destination = map(pathlib.Path, sys.argv[1:])
+with archive_path.open('rb') as stream:
+    require(hashlib.file_digest(stream, 'sha256').hexdigest() == os.environ['NIKKI_ARCHIVE_SHA256'], 'SDK archive SHA256 mismatch')
+unpacked = archive_path.parent / 'unpacked'
+with tarfile.open(archive_path) as archive:
+    archive.extractall(unpacked, filter='data')
+roots = list(unpacked.iterdir())
+require(len(roots) == 1 and roots[0].is_dir(), 'Expected one package root')
+package = roots[0]
+require(package.name == f'nikki-{os.environ["NIKKI_VERSION"]}-{os.environ["WASM_ARCH"]}-emscripten', 'Unexpected package root')
+require((package / 'release-version.txt').read_text().strip() == os.environ['NIKKI_VERSION'], 'Package version mismatch')
+require((package / 'source-revision.txt').read_text().strip() == os.environ['NIKKI_REVISION'], 'Package source SHA mismatch')
+require((package / 'architecture.txt').read_text().strip() == os.environ['WASM_ARCH'], 'Package architecture mismatch')
+require((package / 'emsdk-version.txt').read_text().strip() == '6.0.12', 'Package emsdk mismatch')
+require((package / 'lib/cmake/nikki/nikkiConfig.cmake').is_file(), 'Missing installed CMake package')
+shutil.move(str(package), destination)
+PY
+printf 'Downloaded nikki %s at source %s to %s\n' "$NIKKI_VERSION" "$NIKKI_REVISION" "$DESTINATION"

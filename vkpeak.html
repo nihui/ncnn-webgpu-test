@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ncnn Vulkan on nikki browser peak benchmark" data-i18n-content="vkpeakDescription">
+    <title data-i18n="vkpeakTitle">vkpeak · ncnn Vulkan on WebGPU</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23b9ff39'/><path d='M13 18h9l10 28 10-28h9L37 54H27z' fill='%230b0d0c'/></svg>">
+    <link rel="stylesheet" href="./vkpeak.css">
+</head>
+<body>
+    <main class="shell">
+        <header class="hero">
+            <nav><a href="./index.html">← SqueezeNet</a> · <a href="./benchncnn.html">benchncnn</a> · <a href="./benchncnn_llm.html">benchncnn_llm</a></nav>
+            <p class="eyebrow">NCNN · VULKAN ON nikki</p>
+            <h1 data-i18n-html="vkpeakHero"><em>vkpeak</em> in your browser</h1>
+            <p class="lede" data-i18n-html="vkpeakIntro">Based on <a href="https://github.com/nihui/vkpeak" target="_blank" rel="noreferrer">vkpeak</a>, measuring synthetic arithmetic, cooperative matrix throughput and memory bandwidth through ncnn Vulkan API, nikki and WebGPU. Results do not represent real model performance.</p>
+        </header>
+
+        <section class="controls" aria-labelledby="device-title">
+            <div>
+                <p class="section-label" data-i18n="deviceSection">01 / DEVICE</p>
+                <h2 id="device-title" data-i18n="chooseDevice">Choose a WebGPU device</h2>
+                <p data-i18n="deviceRunHint">Devices run one at a time to avoid GPU contention. Completed results stay in the same table.</p>
+            </div>
+            <div id="device-buttons" class="device-buttons">
+                <button id="device-placeholder" type="button" disabled data-i18n="enumeratingDevices">Enumerating devices…</button>
+            </div>
+            <p id="status" class="status" aria-live="polite" data-i18n="initializingNikki">Initializing nikki.</p>
+        </section>
+
+        <section class="results-section" aria-labelledby="results-title">
+            <div class="results-heading">
+                <div>
+                    <p class="section-label" data-i18n="benchmarkResultSection">02 / RESULTS</p>
+                    <h2 id="results-title" data-i18n="peakResults">Peak benchmark results</h2>
+                </div>
+                <p data-i18n="peakTableHint">Each row is a vkpeak test; each column is a WebGPU device enumerated by ncnn.</p>
+            </div>
+            <div id="results" class="results">
+                <div class="empty" data-i18n="devicesEmpty">The results table will appear after device enumeration.</div>
+            </div>
+        </section>
+
+        <footer>
+            <span>ncnn · Vulkan · nikki · WebGPU</span>
+            <span data-i18n="localTests">All tests run locally in your browser</span>
+        </footer>
+    </main>
+    <script type="module" src="./vkpeak.js"></script>
+</body>
+</html>

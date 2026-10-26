@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Compare ncnn SqueezeNet inference with WASM, WASM SIMD and multiple WebGPU devices in your browser" data-i18n-content="squeezeDescription">
+    <title data-i18n="squeezeTitle">ncnn SqueezeNet · Browser Backend Lab</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23b9ff39'/><path d='M17 18h30v8H26v8h18v8H26v8h21v8H17z' fill='%230b0d0c'/></svg>">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <main class="shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">NCNN · SQUEEZENET V1.1</p>
+                <h1 data-i18n-html="squeezeHero">One image,<br><em>multiple browser backends.</em></h1>
+                <p class="lede" data-i18n="squeezeIntro">Run a real ImageNet model locally. Each run performs 10 consecutive inferences and shows the fastest time, top-3 classes and confidence.</p>
+            </div>
+            <div class="capabilities" aria-label="Browser capabilities" data-i18n-aria-label="browserCapabilities">
+                <div><span class="cap-dot"></span><strong>WASM</strong><span id="cap-wasm" data-i18n="checking">Checking</span></div>
+                <div><span class="cap-dot"></span><strong>SIMD</strong><span id="cap-wasm-simd" data-i18n="checking">Checking</span></div>
+                <div><span class="cap-dot"></span><strong>WebGPU</strong><span id="cap-webgpu" data-i18n="checking">Checking</span></div>
+            </div>
+        </header>
+
+        <section class="workspace">
+            <label class="drop-zone" id="drop-zone" for="image-file">
+                <input id="image-file" type="file" accept="image/*">
+                <img id="preview" alt="Image preview for classification" data-i18n-alt="imagePreview" hidden>
+                <span id="preview-placeholder" class="preview-placeholder">
+                    <span class="upload-icon">↥</span>
+                    <strong data-i18n="chooseImage">Choose or drop an image</strong>
+                    <small>JPEG · PNG · WebP</small>
+                </span>
+                <span class="replace-hint" data-i18n="replaceImage">Click to replace the image</span>
+            </label>
+
+            <div class="controls">
+                <div>
+                    <p class="section-label" data-i18n="inputSection">01 / INPUT</p>
+                    <h2 data-i18n="chooseBackend">Choose an inference backend</h2>
+                    <p id="source-meta" class="source-meta" data-i18n="noImage">No image selected</p>
+                </div>
+                <div class="backend-buttons">
+                    <button type="button" data-backend-key="wasm" data-backend-kind="wasm" disabled>
+                        <span>WASM</span>
+                        <small data-i18n="scalarCpu">Scalar CPU</small>
+                    </button>
+                    <button type="button" data-backend-key="wasm-simd" data-backend-kind="wasm-simd" disabled>
+                        <span>WASM SIMD</span>
+                        <small>128-bit SIMD</small>
+                    </button>
+                    <button id="webgpu-device-placeholder" type="button" data-backend-kind="webgpu" disabled>
+                        <span>WebGPU</span>
+                        <small data-i18n="enumeratingDevices">Enumerating devices…</small>
+                    </button>
+                </div>
+                <p id="status-line" class="status-line" aria-live="polite" data-i18n="uploadToStart">Upload an image to get started.</p>
+            </div>
+        </section>
+
+        <section class="results-section">
+            <div class="results-heading">
+                <div>
+                    <p class="section-label" data-i18n="resultSection">02 / RESULTS</p>
+                    <h2 data-i18n="classificationPerformance">Classification and performance</h2>
+                </div>
+                <p data-i18n="squeezeTiming">Timing covers creating `Extractor`, `Extractor::input()` and `Extractor::extract()`. Model loading, WebGPU shader compilation and image preprocessing are excluded; initialization is shown separately.</p>
+            </div>
+            <div id="results" class="results">
+                <article class="comparison-card" aria-labelledby="comparison-title">
+                    <header>
+                        <div>
+                            <p class="section-label" data-i18n="fastestTen">Fastest of 10</p>
+                            <h3 id="comparison-title" data-i18n="backendComparison">Backend and device timings</h3>
+                        </div>
+                        <p data-i18n="shorterTen">Shorter is faster · Fastest of 10 consecutive inferences</p>
+                    </header>
+                    <div class="benchmark-chart">
+                        <div class="benchmark-row" data-chart-backend="wasm">
+                            <strong>WASM</strong>
+                            <span class="benchmark-track"><span class="benchmark-bar"></span></span>
+                            <span class="benchmark-value" data-i18n="notRun">Not run</span>
+                        </div>
+                        <div class="benchmark-row" data-chart-backend="wasm-simd">
+                            <strong>WASM SIMD</strong>
+                            <span class="benchmark-track"><span class="benchmark-bar"></span></span>
+                            <span class="benchmark-value" data-i18n="notRun">Not run</span>
+                        </div>
+                        <div id="webgpu-chart-placeholder" class="benchmark-row">
+                            <strong>WebGPU</strong>
+                            <span class="benchmark-track"><span class="benchmark-bar"></span></span>
+                            <span class="benchmark-value" data-i18n="checking">Checking</span>
+                        </div>
+                    </div>
+                </article>
+                <div class="empty-results" data-i18n="resultsEmpty">Run a backend to see detailed results here.</div>
+            </div>
+        </section>
+
+        <footer>
+            <span>ncnn · SqueezeNet V1.1 · Vulkan on nikki</span>
+            <span><a href="./benchncnn.html">benchncnn</a> · <a href="./benchncnn_llm.html">benchncnn_llm</a> · <a href="./vkpeak.html">vkpeak</a></span>
+        </footer>
+    </main>
+
+    <template id="result-template">
+        <article class="result-card">
+            <header>
+                <div>
+                    <h3 class="result-title"></h3>
+                    <p class="result-detail"></p>
+                </div>
+                <div class="fastest">
+                    <span data-i18n="fastestTen">Fastest of 10</span>
+                    <strong class="fastest-value"></strong>
+                </div>
+            </header>
+            <ol class="top-list"></ol>
+            <div class="timing-panel">
+                <div class="timing-title">
+                    <span data-i18n="tenTimings">10 inferences / ms</span>
+                    <span><span data-i18n="initialization">Initialization</span> <strong class="init-value"></strong></span>
+                </div>
+                <div class="timing-list"></div>
+            </div>
+        </article>
+    </template>
+
+    <script type="module" src="./app.js"></script>
+</body>
+</html>

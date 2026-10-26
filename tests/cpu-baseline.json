@@ -1,0 +1,58 @@
+{
+  "source": "Scalar CPU SqueezeNet asset from ncnn-webgpu-test master 0183b7344ba291e6591282477ffb0dc83919839c; measured with tests/fixtures.mjs before removal",
+  "wasmSha256": "c75ad2fbd820574c4e36e1cdbdfba3f8ea56b8bfcf966698a1a2b94ac86dee3d",
+  "modelSha256": "d0f7370ab3c163778c449a93b76799ea770e629b1b3c7afdb3981c1cd1e20243",
+  "cases": [
+    {
+      "name": "square",
+      "results": [
+        {
+          "index": 549,
+          "score": 0.7299587726593018
+        },
+        {
+          "index": 797,
+          "score": 0.06370636820793152
+        },
+        {
+          "index": 721,
+          "score": 0.058640941977500916
+        }
+      ]
+    },
+    {
+      "name": "non-square",
+      "results": [
+        {
+          "index": 879,
+          "score": 0.34996291995048523
+        },
+        {
+          "index": 549,
+          "score": 0.11145492643117905
+        },
+        {
+          "index": 723,
+          "score": 0.08472738415002823
+        }
+      ]
+    },
+    {
+      "name": "square-repeat",
+      "results": [
+        {
+          "index": 549,
+          "score": 0.7299587726593018
+        },
+        {
+          "index": 797,
+          "score": 0.06370636820793152
+        },
+        {
+          "index": 721,
+          "score": 0.058640941977500916
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SqueezeNet worker acceptance test</title>
+<pre id="test-result">Running SqueezeNet worker acceptance tests…</pre>
+<script type="module">
+import { cases as fixtures, pixels, compareTop3, validateABI } from "../fixtures.mjs";
+import { runExtraDemos } from "./extra-demos.mjs";
+const parameters = new URL(location.href).searchParams;
+const backends = parameters.has("cpu-only") ? ["wasm", "wasm-simd"] : ["wasm", "wasm-simd", "webgpu"];
+const workers = new Map();
+let id = 0;
+let lastDispatches = 0;
+function request(backend, message) {
+    let worker = workers.get(backend);
+    if (!worker) {
+        worker = new Worker(`/backend-worker.mjs?backend=${backend}&gpuIndex=0`, { type: "module" });
+        workers.set(backend, worker);
+    }
+    const requestId = ++id;
+    return new Promise((resolve, reject) => {
+        const onMessage = (event) => {
+            if (event.data.id !== requestId) return;
+            worker.removeEventListener("message", onMessage);
+            worker.removeEventListener("error", onError);
+            if (event.data.status !== "pass") reject(new Error(JSON.stringify(event.data)));
+            else resolve(event.data);
+        };
+        const onError = (event) => reject(new Error(event.message));
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError, { once: true });
+        worker.postMessage({ ...message, id: requestId });
+    });
+}
+function validate(result) {
+    validateABI(result);
+    if (result.observation.validationErrors.length || result.observation.deviceLost) throw new Error("WebGPU error: " + JSON.stringify(result.observation));
+    if (result.backend === "webgpu") {
+        const expected = parameters.get("expect-arch");
+        if (expected && result.architecture !== expected) throw new Error(`Expected ${expected}, got ${result.architecture}`);
+        if (result.observation.dispatches <= lastDispatches) throw new Error("WebGPU did not dispatch compute for this inference");
+        lastDispatches = result.observation.dispatches;
+    }
+}
+window.testDone = (async () => {
+    const cases = [];
+    let devices = [];
+    try {
+        if (backends.includes("webgpu")) {
+            devices = (await request("webgpu", { type: "list-devices" })).devices;
+            if (!devices.length) throw new Error("No WebGPU adapter; this is not a passing GPU test");
+        }
+        // Non-square inputs exercise direct resizing, asymmetric channels expose
+        // RGB/BGR mistakes, and the repeat exercises persistent worker/model reuse.
+        for (const [name, width, height, seed] of fixtures) {
+            const results = [];
+            for (const backend of backends) {
+                const result = await request(backend, { type: "run", width, height, pixels: pixels(width, height, seed) });
+                validate(result);
+                results.push(result);
+            }
+            const baseline = results[0].results;
+            for (const result of results.slice(1)) compareTop3(baseline, result.results, `${name} ${result.backend}`);
+            cases.push({ name, width, height, results });
+        }
+        const extraDemos = parameters.has("extra-demos") ? await runExtraDemos(parameters.get("expect-arch")) : null;
+        return { status: "pass", devices, cases, extraDemos, comparison: "top-3 IDs exact; scores abs 0.002 + rel 0.02; not all 1000 logits", input: "deterministic RGBA fixtures; real committed SqueezeNet model" };
+    } catch (error) {
+        return { status: "fail", error: error.stack || String(error), devices, cases };
+    } finally {
+        for (const worker of workers.values()) worker.terminate();
+    }
+})();
+window.testDone.then((report) => { document.querySelector("#test-result").textContent = JSON.stringify(report, null, 2); });
+</script>

@@ -1,0 +1,214 @@
+--- a/vkpeak.cpp
++++ b/vkpeak.cpp
+@@ -1797,6 +1797,19 @@
+     return false;
+ }
+ 
++// Return allocators only after all matrices and commands have released them.
++struct VkpeakAllocators
++{
++    ncnn::VulkanDevice* device;
++    ncnn::VkAllocator* blob;
++    ncnn::VkAllocator* staging;
++    ~VkpeakAllocators()
++    {
++        if (staging) device->reclaim_staging_allocator(staging);
++        if (blob) device->reclaim_blob_allocator(blob);
++    }
++};
++
+ static double vkpeak(int device_id, int storage_type, int arithmetic_type, int packing_type)
+ {
+     ncnn::VulkanDevice* vkdev = ncnn::get_gpu_device(device_id);
+@@ -1910,6 +1923,7 @@
+     opt.use_fp16_arithmetic = arithmetic_type == 1;
+ 
+     ncnn::VkAllocator* allocator = vkdev->acquire_blob_allocator();
++    VkpeakAllocators allocators = {vkdev, allocator, 0};
+ 
+     // reuse c storage, max 512M
+     int buffer_size = std::min((int)(vkdev->get_heap_budget() / 8), 512) * 1024 * 1024;
+@@ -1926,7 +1940,13 @@
+         buffer_size = (int)std::min((uint32_t)buffer_size, max_buffer_size);
+     }
+ 
++    // Bound the browser worker's allocation; keep the upstream kernels/scoring.
++    buffer_size = std::min(buffer_size, 16 * 1024 * 1024);
+     ncnn::VkMat c(buffer_size, (size_t)1u, 1, allocator);
++    if (c.empty())
++    {
++        return 0;
++    }
+ 
+     int elemsize;
+     if (storage_type == 0 || storage_type == 3)
+@@ -2323,16 +2343,27 @@
+             max_invocation_count = std::max(max_invocation_count / (M * N), 1);
+     }
+ 
++    // Clamp full workgroups by both WebGPU's dispatch limit and output bytes.
++    const int output_elemsize = use_fp16_fp32_matrix || use_bf16_fp32_matrix || use_fp8_fp32_matrix || use_ocp_fp32_matrix ? 4 : elemsize;
++    const uint64_t group_bytes = packing_type == 256 ? (uint64_t)M * N * output_elemsize : (uint64_t)local_size_x * elemsize;
++    const uint64_t max_groups = std::min((uint64_t)buffer_size / group_bytes, (uint64_t)vkdev->info.physicalDeviceProperties().limits.maxComputeWorkGroupCount[0]);
++    max_invocation_count = (int)std::min((uint64_t)max_invocation_count, max_groups * local_size_x);
++    max_invocation_count = max_invocation_count / local_size_x * local_size_x;
++    if (max_invocation_count < local_size_x)
++    {
++        return 0;
++    }
++
+     double max_gflops = 0;
+ 
+     // start with little works
+-    int invocation_count = std::max(max_invocation_count / 32, 8);
++    int invocation_count = std::max(max_invocation_count / 32, local_size_x);
+     int loop = 16;
+ 
+     bool rerun = true;
+ 
+     // prepare storage
+-    while (rerun)
++    for (int calibration = 0; rerun && calibration < 16; calibration++)
+     {
+         rerun = false;
+ 
+@@ -2563,11 +2594,14 @@
+                 }
+             }
+ 
++            if (spirv.empty() || spirv_dual.empty())
++            {
++                return 0;
++            }
+             int ret0 = pipeline.create(spirv.data(), spirv.size() * 4, specializations);
+             int ret1 = pipeline_dual.create(spirv_dual.data(), spirv_dual.size() * 4, specializations);
+             if (ret0 != 0 || ret1 != 0)
+             {
+-                vkdev->reclaim_blob_allocator(allocator);
+                 return 0;
+             }
+         }
+@@ -2600,7 +2634,6 @@
+                 int ret = cmd.submit_and_wait();
+                 if (ret != 0)
+                 {
+-                    vkdev->reclaim_blob_allocator(allocator);
+                     return 0;
+                 }
+ 
+@@ -2608,7 +2641,7 @@
+ 
+                 double time = t1 - t0;
+ 
+-                if (time < 300)
++                if (time < 300 && calibration + 1 < 16)
+                 {
+                     // for fast device
+                     if (invocation_count * 2 <= max_invocation_count)
+@@ -2628,7 +2661,6 @@
+                 ret = cmd_dual.submit_and_wait();
+                 if (ret != 0)
+                 {
+-                    vkdev->reclaim_blob_allocator(allocator);
+                     return 0;
+                 }
+ 
+@@ -2636,7 +2668,7 @@
+ 
+                 double time_dual = t1 - t0;
+ 
+-                if (time_dual < 300)
++                if (time_dual < 300 && calibration + 1 < 16)
+                 {
+                     // for fast device
+                     if (invocation_count * 2 <= max_invocation_count)
+@@ -2695,8 +2727,6 @@
+         }
+     }
+ 
+-    vkdev->reclaim_blob_allocator(allocator);
+-
+     return max_gflops;
+ }
+ 
+@@ -2716,6 +2746,7 @@
+ 
+     ncnn::VkAllocator* staging_allocator = vkdev->acquire_staging_allocator();
+     ncnn::VkAllocator* allocator = vkdev->acquire_blob_allocator();
++    VkpeakAllocators allocators = {vkdev, allocator, staging_allocator};
+ 
+     opt.blob_vkallocator = allocator;
+     opt.workspace_vkallocator = allocator;
+@@ -2738,6 +2769,8 @@
+         buffer_size = std::min(buffer_size, (size_t)max_buffer_size);
+     }
+ 
++    buffer_size = std::min(buffer_size, (size_t)16 * 1024 * 1024);
++
+     double max_gbps = 0;
+ 
+     if (from_type == 0 && to_type == 0)
+@@ -2779,6 +2812,11 @@
+         void* devptr = devbuf.mapped_ptr();
+         void* hostptr = hostbuf.data;
+ 
++        if (!devptr || !hostptr)
++        {
++            return 0;
++        }
++
+         const int cmd_loop = 10;
+ 
+         for (int i = 0; i < cmd_loop; i++)
+@@ -2816,6 +2854,11 @@
+         void* devptr = devbuf.mapped_ptr();
+         void* hostptr = hostbuf.data;
+ 
++        if (!devptr || !hostptr)
++        {
++            return 0;
++        }
++
+         const int cmd_loop = 10;
+ 
+         for (int i = 0; i < cmd_loop; i++)
+@@ -2850,6 +2893,11 @@
+         ncnn::VkMat a(1, buffer_size, 1, allocator);
+         ncnn::VkMat b(1, buffer_size, 1, allocator);
+ 
++        if (a.empty() || b.empty())
++        {
++            return 0;
++        }
++
+         const int cmd_loop = 50;
+ 
+         for (int i = 0; i < cmd_loop; i++)
+@@ -2865,8 +2913,6 @@
+             int ret = cmd.submit_and_wait();
+             if (ret != 0)
+             {
+-                vkdev->reclaim_staging_allocator(staging_allocator);
+-                vkdev->reclaim_blob_allocator(allocator);
+                 return 0;
+             }
+ 
+@@ -2883,12 +2929,10 @@
+         }
+     }
+ 
+-    vkdev->reclaim_staging_allocator(staging_allocator);
+-    vkdev->reclaim_blob_allocator(allocator);
+-
+     return max_gbps;
+ }
+ 
++#ifndef VKPEAK_LIBRARY
+ static std::string get_gpu_driver_info(int device_id)
+ {
+     ncnn::VulkanDevice* vkdev = ncnn::get_gpu_device(device_id);
+@@ -3185,3 +3229,4 @@
+ 
+     return 0;
+ }
++#endif // VKPEAK_LIBRARY
