@@ -76,6 +76,8 @@ jobs:
             cmake --build "build-$arch" --target vkpeak-capabilities --parallel 2
             node tests/check-vkpeak-capabilities.mjs "build-$arch/tests/vkpeak-capabilities.mjs" > "test-results-vkpeak-capabilities-$arch.json"
             cat "test-results-vkpeak-capabilities-$arch.json"
+            python3 tests/check-vkpeak-upstream-gates.py "build-$arch/upstream/vkpeak/vkpeak.cpp" > "test-results-vkpeak-upstream-gates-$arch.json"
+            cat "test-results-vkpeak-upstream-gates-$arch.json"
           done
       - name: Build and verify scalar and SIMD CPU modules
         run: |
