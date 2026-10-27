@@ -18,7 +18,11 @@ Only nikki is consumed as a prebuilt SDK; ncnn and vkpeak are upstream sources.
 The nikki SDK supplies its matching Tint/SPIRV-Tools archives, Vulkan headers,
 pinned Emdawnwebgpu port and Asyncify/Closure link settings through
 `nikki::static`. Use a dual-architecture SDK release that includes the Emdawn
-runtime and architecture metadata.
+runtime and architecture metadata. The WebGPU vkpeak build requires release
+`20261027` or newer for packed saturating integer dots and int8 cooperative
+matrix translation; a reused older SDK fails configuration rather than exposing
+tests its translator cannot run. This minimum does not apply to CPU or
+SqueezeNet-only builds.
 
 Each build resolves the latest formal nikki release once through GitHub's public
 API. The selected YYYYMMDD tag is resolved to its actual commit, including
@@ -166,6 +170,7 @@ for arch in wasm32 wasm64; do
     node tests/check-vkpeak-contract.mjs "build-$arch/assets/vkpeak-webgpu.mjs"
     cmake --build "build-$arch" --target vkpeak-capabilities --parallel 2
     node tests/check-vkpeak-capabilities.mjs "build-$arch/tests/vkpeak-capabilities.mjs"
+    python3 tests/check-vkpeak-upstream-gates.py "build-$arch/upstream/vkpeak/vkpeak.cpp"
 done
 for backend in wasm wasm-simd; do
     CPU_BACKEND="$backend" BUILD_DIR="build-cpu-$backend" tools/build-cpu.sh
@@ -252,14 +257,19 @@ warmups. The vkpeak patch guards the CLI for library inclusion and bounds
 browser buffers to 16 MiB plus dispatch/calibration limits; it preserves the
 upstream kernels and throughput calculations. These upstream workloads are
 not intended to reproduce the old generated vkpeak asset's timing values.
-The `int8-dotprod` item stays in the 12-scenario list but is explicitly
-unsupported: its upstream single/dual kernels require saturating packed dot
-(`OpSDotAccSat`), which the current nikki SDK rejects. A device dot-product
-feature flag alone does not establish support. The original kernels are not
-silently changed to non-saturating arithmetic; `int8-matrix` keeps its separate
-cooperative-matrix capability check. A separate no-GPU diagnostic invokes the
-actual shim with device-lookup stubs and advertised dot/matrix features: dot is
-rejected before any device/kernel call, while matrix remains eligible.
+The `int8-dotprod` item uses the original saturating packed-dot
+(`OpSDotAccSat`) kernels. SDK 20261027 or newer provides the required lowering;
+its device `shaderIntegerDotProduct` feature controls eligibility. General
+`shaderInt8` arithmetic and 8-bit buffer storage are not required for packed
+32-bit operands. `int8-matrix` independently requires a matching signed-int8
+input/int32 accumulator cooperative-matrix configuration; both the shim and
+adapted upstream gate allow this dedicated path without general `shaderInt8`.
+The SDK minimum is checked at configure time, because an older SDK's dot-product
+feature alone does not guarantee the needed translator support. No shader or
+throughput formula is substituted. A no-GPU diagnostic invokes the actual shim
+with device-lookup stubs: dot and matrix remain eligible with `shaderInt8=false`,
+while missing features or incompatible matrix types/scope are rejected before
+device lookup. This checks eligibility, not hardware throughput.
 
 ## Benchmark and vkpeak contracts
 

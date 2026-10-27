@@ -146,6 +146,8 @@ if(NCNN_WEBGPU_EXTRA_DEMOS)
             "-sEXPORTED_RUNTIME_METHODS=['ccall','callMain','HEAPU8']")
     endforeach()
     if(NOT cpu_build)
+        include(cmake/VkpeakSdk.cmake)
+        require_vkpeak_sdk("${nikki_DIR}")
         require_upstream_checkout(vkpeak "${VKPEAK_SOURCE_DIR}" f37dab4c421781bf047face221dbaf6ae112a5e7)
         prepare_upstream_sources(vkpeak "${VKPEAK_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/patches/vkpeak-webgpu.patch"
             vkpeak.cpp)

@@ -15,4 +15,4 @@ const module = await factory({ instantiateWasm(imports, receive) {
     return {};
 } });
 assert.equal(module._ncnn_vkpeak_test_capabilities(), 0, "vkpeak capability/dispatch guard failed");
-console.log(JSON.stringify({ status: "pass", check: "upstream saturating dot rejected before device lookup; int8 matrix independently supported", mockedGpuCapabilities: true, gpuBenchmarkExecuted: false }));
+console.log(JSON.stringify({ status: "pass", check: "packed dot and typed int8 matrix supported without shaderInt8; missing features rejected before device lookup", mockedGpuCapabilities: true, gpuBenchmarkExecuted: false }));

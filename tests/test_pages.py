@@ -346,5 +346,31 @@ class SdkReleaseTests(unittest.TestCase):
                 resolver.resolve_release(self.fetch)
 
 
+class VkpeakSdkTests(unittest.TestCase):
+    def test_minimum_sdk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "lib/cmake/nikki"
+            package.mkdir(parents=True)
+            script = root / "check.cmake"
+            script.write_text(f'include("{ROOT / "cmake/VkpeakSdk.cmake"}")\n'
+                              f'require_vkpeak_sdk("{package}")\n')
+            for version in (None, "", "20261026", "20261027oops", "main",
+                            "20261027\n", "20261028", "20270101"):
+                with self.subTest(version=version):
+                    metadata = root / "release-version.txt"
+                    if version is None:
+                        metadata.unlink(missing_ok=True)
+                    else:
+                        metadata.write_text(version)
+                    result = subprocess.run(["cmake", "-P", str(script)],
+                                            text=True, capture_output=True)
+                    if version in ("20261027\n", "20261028", "20270101"):
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("vkpeak requires nikki SDK 20261027", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

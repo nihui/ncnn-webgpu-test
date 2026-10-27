@@ -111,13 +111,13 @@ bool supported(const GpuInfo& info, const Scenario& scenario)
         return false;
     if (scenario.arithmetic == 6)
     {
-        // Upstream's single/dual kernels use OpSDotAccSat. The current nikki
-        // translator supports plain packed dot, but rejects saturating dot.
-        // Keep the upstream arithmetic intact instead of publishing a different
-        // kernel's score under the same scenario name.
+        // Packed dot uses 32-bit operands, not general shaderInt8 arithmetic.
+        // The required SDK translates upstream's saturating OpSDotAccSat intact.
         if (scenario.packing == 4)
-            return false;
-        if (!info.support_int8_arithmetic())
+            return info.queryShaderIntegerDotProductFeatures().shaderIntegerDotProduct;
+        // Matrix i8 components and constructor casts use nikki's dedicated
+        // cooperative-matrix lowering; do not require general shaderInt8.
+        if (scenario.packing != 256 && !info.support_int8_arithmetic())
             return false;
     }
     return scenario.packing != 256 || (info.support_cooperative_matrix() && matrix_supported(info, scenario.arithmetic == 1));
